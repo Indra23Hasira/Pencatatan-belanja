@@ -739,20 +739,55 @@ function fmtDate(d){
   const dt = new Date(d + 'T00:00:00');
   return dt.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
 }
-// Format sebuah nilai IDR ke mata uang tampilan dashboard yang sedang dipilih (IDR/USD/KHR)
-function fmtCurrency(amountIDR){
-  amountIDR = Number(amountIDR) || 0;
+// Format nilai yang SUDAH berada dalam mata uang tampilan Dashboard.
+function fmtCurrency(amount){
+  amount = Number(amount) || 0;
   if(dashDisplayCurrency === 'USD'){
-    const kurs = Number(settings.kursUsdIdr) || 0;
-    const usd = kurs > 0 ? amountIDR / kurs : 0;
-    return '$ ' + usd.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    return '$ ' + amount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
   }
   if(dashDisplayCurrency === 'KHR'){
-    const kurs = Number(settings.kursKhrIdr) || 0;
-    const khr = kurs > 0 ? amountIDR / kurs : 0;
-    return '៛ ' + Math.round(khr).toLocaleString('id-ID');
+    return '៛ ' + Math.round(amount).toLocaleString('id-ID');
   }
-  return fmtIDR(amountIDR);
+  return fmtIDR(amount);
+}
+
+// Ambil nilai asli transaksi/pinjaman.
+// Data lama yang belum punya currency dianggap IDR.
+function getOriginalValue(item){
+  return {
+    amount: Number(item && item.jumlah != null ? item.jumlah : (item && item.jumlahIDR != null ? item.jumlahIDR : 0)) || 0,
+    currency: (item && item.currency) || 'IDR'
+  };
+}
+
+// Konversi nilai asli langsung ke mata uang yang dipilih di Dashboard.
+function dashboardValue(item){
+  const original = getOriginalValue(item);
+  return convertAmount(original.amount, original.currency, dashDisplayCurrency);
+}
+
+// Sisa pinjaman dalam mata uang asli pinjaman.
+// Pembayaran dikonversi langsung dari mata uang pembayaran ke mata uang pinjaman.
+function loanSisaDashboard(p){
+  const loanCurrency = p.currency || 'IDR';
+  const principal = Number(p.jumlah != null ? p.jumlah : p.jumlahIDR) || 0;
+
+  const paidInLoanCurrency = (p.pembayaran || []).reduce((sum, pay) => {
+    const payAmount = Number(pay.jumlah != null ? pay.jumlah : pay.jumlahIDR) || 0;
+    const payCurrency = pay.currency || 'IDR';
+    return sum + convertAmount(payAmount, payCurrency, loanCurrency);
+  }, 0);
+
+  return Math.max(0, principal - paidInLoanCurrency);
+}
+
+// Modal awal disimpan dalam USD, jadi konversikan langsung USD -> mata uang Dashboard.
+function modalDashboardValue(usdAmount){
+  return convertAmount(
+    Number(usdAmount) || 0,
+    'USD',
+    dashDisplayCurrency
+  );
 }
 function setDashCurrency(cur){
   dashDisplayCurrency = cur;
@@ -831,28 +866,47 @@ function renderDashboard(){
   document.getElementById('dashPeriodLabel').textContent = 'Periode ' + period.label;
   document.getElementById('dashPeriodTag').textContent = '· 21–20';
 
-  // Saldo cash/scan: modal direset tiap periode (tidak akumulasi dari periode sebelumnya)
-  const modal = getModalPeriode(period);
-  let cash = modal.cashAwal;
-  let scan = modal.scanAwal;
+  // =========================================================
+  // SALDO CASH / SCAN
+  // Modal awal disimpan dalam USD, lalu dikonversi LANGSUNG
+  // ke mata uang Dashboard.
+  // =========================================================
+  const scanActive =
+    settings.tanggalMulaiScan &&
+    period.start >= new Date(settings.tanggalMulaiScan + 'T00:00:00');
 
+  let cash = modalDashboardValue(
+    scanActive ? settings.splitCashUsd : settings.modalAwalUsd
+  );
+
+  let scan = scanActive
+    ? modalDashboardValue(settings.splitScanUsd)
+    : 0;
+
+  // Pengeluaran transaksi: currency asli -> currency Dashboard
   transaksiData.forEach(t => {
     if(inRange(t.tanggal, period.start, period.end)){
-      if(t.metode === 'cash') cash -= (t.jumlahIDR||0);
-      else scan -= (t.jumlahIDR||0);
+      const value = dashboardValue(t);
+      if(t.metode === 'cash') cash -= value;
+      else scan -= value;
     }
   });
+
+  // Pinjaman dan pembayaran:
+  // masing-masing dikonversi langsung dari currency aslinya
+  // ke currency Dashboard.
   pinjamanData.forEach(p => {
     if(inRange(p.tanggalPinjam, period.start, period.end)){
-      const jIDR = Number(p.jumlahIDR != null ? p.jumlahIDR : p.jumlah) || 0;
-      if(p.metode === 'cash') cash -= jIDR;
-      else scan -= jIDR;
+      const value = dashboardValue(p);
+      if(p.metode === 'cash') cash -= value;
+      else scan -= value;
     }
-    (p.pembayaran||[]).forEach(pay => {
+
+    (p.pembayaran || []).forEach(pay => {
       if(inRange(pay.tanggal, period.start, period.end)){
-        const payIDR = Number(pay.jumlahIDR != null ? pay.jumlahIDR : pay.jumlah) || 0;
-        if(pay.metode === 'cash') cash += payIDR;
-        else scan += payIDR;
+        const value = dashboardValue(pay);
+        if(pay.metode === 'cash') cash += value;
+        else scan += value;
       }
     });
   });
@@ -860,44 +914,97 @@ function renderDashboard(){
   document.getElementById('statSaldoCash').textContent = fmtCurrency(cash);
   document.getElementById('statSaldoScan').textContent = fmtCurrency(scan);
 
-  // Pengeluaran periode ini (transaksi within selected period only)
-  const trxThisPeriod = transaksiData.filter(t => inRange(t.tanggal, period.start, period.end));
-  const totalKeluar = trxThisPeriod.reduce((s,t) => s + (t.jumlahIDR||0), 0);
-  document.getElementById('statPengeluaran').textContent = fmtCurrency(totalKeluar);
-  document.getElementById('statPengeluaranSub').textContent = trxThisPeriod.length + ' transaksi';
+  // =========================================================
+  // PENGELUARAN PERIODE
+  // =========================================================
+  const trxThisPeriod = transaksiData.filter(
+    t => inRange(t.tanggal, period.start, period.end)
+  );
 
-  // Piutang belum dibayar (all time, not period-bound) — pakai sisa hutang agar cicilan/parsial terhitung
-  const belumLunas = pinjamanData.filter(p => loanStatus(p) !== 'lunas');
-  const totalPiutang = belumLunas.reduce((s,p) => s + loanSisa(p), 0);
-  document.getElementById('statPiutang').textContent = fmtCurrency(totalPiutang);
-  document.getElementById('statPiutangSub').textContent = belumLunas.length + ' orang belum lunas';
+  const totalKeluar = trxThisPeriod.reduce(
+    (sum, t) => sum + dashboardValue(t),
+    0
+  );
 
-  // Pie chart per kategori (periode ini)
+  document.getElementById('statPengeluaran').textContent =
+    fmtCurrency(totalKeluar);
+  document.getElementById('statPengeluaranSub').textContent =
+    trxThisPeriod.length + ' transaksi';
+
+  // =========================================================
+  // PIUTANG BELUM DIBAYAR
+  // Hitung sisa dalam currency asli pinjaman, lalu konversi
+  // langsung ke currency Dashboard.
+  // =========================================================
+  const belumLunas = pinjamanData.filter(p => loanSisaDashboard(p) > 0);
+
+  const totalPiutang = belumLunas.reduce((sum, p) => {
+    const sisaAsli = loanSisaDashboard(p);
+    const loanCurrency = p.currency || 'IDR';
+
+    return sum + convertAmount(
+      sisaAsli,
+      loanCurrency,
+      dashDisplayCurrency
+    );
+  }, 0);
+
+  document.getElementById('statPiutang').textContent =
+    fmtCurrency(totalPiutang);
+  document.getElementById('statPiutangSub').textContent =
+    belumLunas.length + ' orang belum lunas';
+
+  // =========================================================
+  // PIE CHART PER KATEGORI
+  // =========================================================
   const byKat = {};
+
   trxThisPeriod.forEach(t => {
     const kat = t.kategori || 'Lain-lain';
-    byKat[kat] = (byKat[kat]||0) + (t.jumlahIDR||0);
+    const value = dashboardValue(t);
+    byKat[kat] = (byKat[kat] || 0) + value;
   });
+
   const labels = Object.keys(byKat);
   const values = labels.map(l => byKat[l]);
+
   const colors = labels.map(l => {
     const k = kategoriData.find(k => k.nama === l);
     return k ? k.color : '#999';
   });
 
   const ctx = document.getElementById('chartKategori').getContext('2d');
+
   if(chartKategori) chartKategori.destroy();
+
   if(labels.length === 0){
-    document.getElementById('legendKategori').innerHTML = '<div class="empty-state" style="padding:10px;"><div class="glyph">📊</div>Belum ada transaksi periode ini</div>';
+    document.getElementById('legendKategori').innerHTML =
+      '<div class="empty-state" style="padding:10px;"><div class="glyph">📊</div>Belum ada transaksi periode ini</div>';
   } else {
     chartKategori = new Chart(ctx, {
       type: 'doughnut',
-      data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 2, borderColor: '#fff' }]},
-      options: { plugins: { legend: { display:false } }, cutout: '62%' }
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: colors,
+          borderWidth: 2,
+          borderColor: '#fff'
+        }]
+      },
+      options: {
+        plugins: { legend: { display:false } },
+        cutout: '62%'
+      }
     });
+
     const legend = document.getElementById('legendKategori');
+
     legend.innerHTML = labels.map((l,i) => {
-      const pct = totalKeluar ? Math.round(values[i]/totalKeluar*100) : 0;
+      const pct = totalKeluar
+        ? Math.round(values[i] / totalKeluar * 100)
+        : 0;
+
       return `<div class="kat-chip"><span class="kat-dot" style="background:${colors[i]}"></span>${l} · ${pct}%</div>`;
     }).join('');
   }
@@ -906,34 +1013,94 @@ function renderDashboard(){
 }
 
 function renderSaldoBulanan(){
-  // Kumpulkan semua periode yang punya transaksi ATAU pinjaman, urut terbaru dulu
+  // Kumpulkan semua periode yang punya transaksi ATAU pinjaman,
+  // lalu hitung semuanya langsung dalam mata uang Dashboard.
   const periodMap = {};
+
   function ensurePeriod(dateStr){
     const p = getPeriode(dateStr);
-    if(!periodMap[p.key]) periodMap[p.key] = { label: p.label, start: p.start, end: p.end, keluar: 0 };
+
+    if(!periodMap[p.key]){
+      periodMap[p.key] = {
+        label: p.label,
+        start: p.start,
+        end: p.end,
+        keluar: 0
+      };
+    }
+
     return periodMap[p.key];
   }
-  transaksiData.forEach(t => { ensurePeriod(t.tanggal).keluar += (t.jumlahIDR||0); });
-  pinjamanData.forEach(p => { ensurePeriod(p.tanggalPinjam); (p.pembayaran||[]).forEach(pay => ensurePeriod(pay.tanggal)); });
+
+  // Pengeluaran transaksi: currency asli -> currency Dashboard
+  transaksiData.forEach(t => {
+    ensurePeriod(t.tanggal).keluar += dashboardValue(t);
+  });
+
+  // Pastikan periode pinjaman dan pembayaran ikut muncul.
+  pinjamanData.forEach(p => {
+    ensurePeriod(p.tanggalPinjam);
+    (p.pembayaran || []).forEach(pay => ensurePeriod(pay.tanggal));
+  });
 
   const keys = Object.keys(periodMap).sort().reverse();
   const tbody = document.getElementById('tblSaldoBulanan');
+
   if(keys.length === 0){
-    tbody.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="glyph">🗂️</div>Belum ada data</div></td></tr>';
+    tbody.innerHTML =
+      '<tr><td colspan="4"><div class="empty-state"><div class="glyph">🗂️</div>Belum ada data</div></td></tr>';
     return;
   }
+
   tbody.innerHTML = keys.map(k => {
     const p = periodMap[k];
-    const modal = getModalPeriode(p);
-    const modalTotal = modal.cashAwal + modal.scanAwal;
 
-    let pinjamKeluar = 0, pinjamMasuk = 0;
+    // Modal awal langsung USD -> mata uang Dashboard.
+    const scanActive =
+      settings.tanggalMulaiScan &&
+      p.start >= new Date(settings.tanggalMulaiScan + 'T00:00:00');
+
+    const modalCashUsd = scanActive
+      ? Number(settings.splitCashUsd) || 0
+      : Number(settings.modalAwalUsd) || 0;
+
+    const modalScanUsd = scanActive
+      ? Number(settings.splitScanUsd) || 0
+      : 0;
+
+    const modalTotal =
+      modalDashboardValue(modalCashUsd) +
+      modalDashboardValue(modalScanUsd);
+
+    // Pinjaman keluar dan pembayaran masuk dihitung langsung
+    // berdasarkan currency masing-masing.
+    let pinjamKeluar = 0;
+    let pinjamMasuk = 0;
+
     pinjamanData.forEach(pj => {
-      if(inRange(pj.tanggalPinjam, p.start, p.end)) pinjamKeluar += Number(pj.jumlahIDR != null ? pj.jumlahIDR : pj.jumlah) || 0;
-      (pj.pembayaran||[]).forEach(pay => { if(inRange(pay.tanggal, p.start, p.end)) pinjamMasuk += Number(pay.jumlahIDR != null ? pay.jumlahIDR : pay.jumlah) || 0; });
+      if(inRange(pj.tanggalPinjam, p.start, p.end)){
+        pinjamKeluar += dashboardValue(pj);
+      }
+
+      (pj.pembayaran || []).forEach(pay => {
+        if(inRange(pay.tanggal, p.start, p.end)){
+          pinjamMasuk += dashboardValue(pay);
+        }
+      });
     });
-    const sisa = modalTotal - p.keluar - pinjamKeluar + pinjamMasuk;
-    return `<tr><td><strong>${p.label}</strong></td><td class="mono">${fmtCurrency(modalTotal)}</td><td class="mono">${fmtCurrency(p.keluar)}</td><td class="mono">${fmtCurrency(sisa)}</td></tr>`;
+
+    const sisa =
+      modalTotal -
+      p.keluar -
+      pinjamKeluar +
+      pinjamMasuk;
+
+    return `<tr>
+      <td><strong>${p.label}</strong></td>
+      <td class="mono">${fmtCurrency(modalTotal)}</td>
+      <td class="mono">${fmtCurrency(p.keluar)}</td>
+      <td class="mono">${fmtCurrency(sisa)}</td>
+    </tr>`;
   }).join('');
 }
 
