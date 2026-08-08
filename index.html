@@ -249,6 +249,14 @@
           <button onclick="shiftDashPeriod(1)">›</button>
         </div>
       </div>
+      <div class="toolbar" style="margin-top:-8px;">
+        <div style="font-size:12px;color:var(--ink-soft);font-weight:600;">Tampilkan saldo dalam</div>
+        <div class="toggle-group" id="currencyToggle">
+          <button type="button" class="toggle-opt active-cash" data-cur="IDR" onclick="setDashCurrency('IDR')">Rp IDR</button>
+          <button type="button" class="toggle-opt" data-cur="USD" onclick="setDashCurrency('USD')">$ USD</button>
+          <button type="button" class="toggle-opt" data-cur="KHR" onclick="setDashCurrency('KHR')">៛ Riel</button>
+        </div>
+      </div>
 
       <div class="grid g4" style="margin-bottom:16px;">
         <div class="card">
@@ -499,6 +507,7 @@ let settings = { kursUsdKhr: 4000, kursKhrIdr: 4, kursUsdIdr: 17900, modalAwalUs
 let unsubs = [];
 let chartKategori = null;
 let dashPeriodOffset = 0; // 0 = current period, -1 previous, +1 next
+let dashDisplayCurrency = 'IDR';
 let trxMetode = 'cash';
 let pinjamMetode = 'cash';
 let bayarMetode = 'cash';
@@ -621,6 +630,28 @@ function fmtDate(d){
   const dt = new Date(d + 'T00:00:00');
   return dt.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
 }
+// Format sebuah nilai IDR ke mata uang tampilan dashboard yang sedang dipilih (IDR/USD/KHR)
+function fmtCurrency(amountIDR){
+  amountIDR = Number(amountIDR) || 0;
+  if(dashDisplayCurrency === 'USD'){
+    const kurs = Number(settings.kursUsdIdr) || 0;
+    const usd = kurs > 0 ? amountIDR / kurs : 0;
+    return '$ ' + usd.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  if(dashDisplayCurrency === 'KHR'){
+    const kurs = Number(settings.kursKhrIdr) || 0;
+    const khr = kurs > 0 ? amountIDR / kurs : 0;
+    return '៛ ' + Math.round(khr).toLocaleString('id-ID');
+  }
+  return fmtIDR(amountIDR);
+}
+function setDashCurrency(cur){
+  dashDisplayCurrency = cur;
+  document.querySelectorAll('#currencyToggle .toggle-opt').forEach(b => {
+    b.classList.toggle('active-cash', b.dataset.cur === cur);
+  });
+  renderDashboard();
+}
 // Periode berjalan tanggal 21 - 20. Nama periode = bulan tanggal mulai (21).
 function getPeriode(dateStr){
   const d = new Date(dateStr + 'T00:00:00');
@@ -689,19 +720,19 @@ function renderDashboard(){
     });
   });
 
-  document.getElementById('statSaldoCash').textContent = fmtIDR(cash);
-  document.getElementById('statSaldoScan').textContent = fmtIDR(scan);
+  document.getElementById('statSaldoCash').textContent = fmtCurrency(cash);
+  document.getElementById('statSaldoScan').textContent = fmtCurrency(scan);
 
   // Pengeluaran periode ini (transaksi within selected period only)
   const trxThisPeriod = transaksiData.filter(t => inRange(t.tanggal, period.start, period.end));
   const totalKeluar = trxThisPeriod.reduce((s,t) => s + (t.jumlahIDR||0), 0);
-  document.getElementById('statPengeluaran').textContent = fmtIDR(totalKeluar);
+  document.getElementById('statPengeluaran').textContent = fmtCurrency(totalKeluar);
   document.getElementById('statPengeluaranSub').textContent = trxThisPeriod.length + ' transaksi';
 
   // Piutang belum dibayar (all time, not period-bound) — pakai sisa hutang agar cicilan/parsial terhitung
   const belumLunas = pinjamanData.filter(p => loanStatus(p) !== 'lunas');
   const totalPiutang = belumLunas.reduce((s,p) => s + loanSisa(p), 0);
-  document.getElementById('statPiutang').textContent = fmtIDR(totalPiutang);
+  document.getElementById('statPiutang').textContent = fmtCurrency(totalPiutang);
   document.getElementById('statPiutangSub').textContent = belumLunas.length + ' orang belum lunas';
 
   // Pie chart per kategori (periode ini)
@@ -765,7 +796,7 @@ function renderSaldoBulanan(){
       (pj.pembayaran||[]).forEach(pay => { if(inRange(pay.tanggal, p.start, p.end)) pinjamMasuk += (pay.jumlah||0); });
     });
     const sisa = modalTotal - p.keluar - pinjamKeluar + pinjamMasuk;
-    return `<tr><td><strong>${p.label}</strong></td><td class="mono">${fmtIDR(modalTotal)}</td><td class="mono">${fmtIDR(p.keluar)}</td><td class="mono">${fmtIDR(sisa)}</td></tr>`;
+    return `<tr><td><strong>${p.label}</strong></td><td class="mono">${fmtCurrency(modalTotal)}</td><td class="mono">${fmtCurrency(p.keluar)}</td><td class="mono">${fmtCurrency(sisa)}</td></tr>`;
   }).join('');
 }
 
