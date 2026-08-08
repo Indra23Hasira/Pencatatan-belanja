@@ -254,12 +254,12 @@
         <div class="card">
           <div class="stat-label">Saldo Cash</div>
           <div class="stat-value" id="statSaldoCash">Rp 0</div>
-          <div class="stat-sub">Uang tunai saat ini</div>
+          <div class="stat-sub">Sisa modal cash periode ini</div>
         </div>
         <div class="card">
           <div class="stat-label">Saldo Scan</div>
           <div class="stat-value" id="statSaldoScan">Rp 0</div>
-          <div class="stat-sub">QRIS / transfer / e-wallet</div>
+          <div class="stat-sub">Sisa modal scan periode ini</div>
         </div>
         <div class="card">
           <div class="stat-label">Pengeluaran Periode Ini</div>
@@ -285,8 +285,8 @@
           <h2 class="section-title">Saldo per Periode (Bulan)</h2>
           <div class="table-wrap" style="max-height:340px;overflow-y:auto;">
             <table>
-              <thead><tr><th>Periode</th><th>Pengeluaran</th><th>Saldo Akhir</th></tr></thead>
-              <tbody id="tblSaldoBulanan"><tr><td colspan="3"><div class="loading"><div class="spinner"></div>Memuat…</div></td></tr></tbody>
+              <thead><tr><th>Periode</th><th>Modal</th><th>Pengeluaran</th><th>Sisa (Bonus)</th></tr></thead>
+              <tbody id="tblSaldoBulanan"><tr><td colspan="4"><div class="loading"><div class="spinner"></div>Memuat…</div></td></tr></tbody>
             </table>
           </div>
         </div>
@@ -345,13 +345,26 @@
           <button class="btn btn-primary" style="margin-top:14px;" onclick="saveKurs()">Simpan Kurs</button>
         </div>
         <div class="card">
-          <h2 class="section-title">Saldo Awal</h2>
-          <div class="field"><label>Saldo Awal Cash (IDR)</label><input type="number" id="setSaldoAwalCash" step="any"></div>
-          <div class="field"><label>Saldo Awal Scan (IDR)</label><input type="number" id="setSaldoAwalScan" step="any"></div>
-          <div class="field"><label>Berlaku sejak tanggal</label><input type="date" id="setSaldoAwalTanggal"></div>
-          <div class="helper">Semua transaksi sebelum tanggal ini tidak dihitung ke saldo berjalan.</div>
-          <button class="btn btn-primary" style="margin-top:14px;" onclick="saveSaldoAwal()">Simpan Saldo Awal</button>
+          <h2 class="section-title">Modal Awal per Periode</h2>
+          <div class="field"><label>Modal Awal (USD) — dikasih fresh tiap tanggal 21</label><input type="number" id="setModalAwalUsd" step="any" placeholder="cth. 1000"></div>
+          <div class="grid g2">
+            <div class="field"><label>Porsi Cash (USD)</label><input type="number" id="setSplitCashUsd" step="any" placeholder="cth. 400"></div>
+            <div class="field"><label>Porsi Scan (USD)</label><input type="number" id="setSplitScanUsd" step="any" placeholder="cth. 600"></div>
+          </div>
+          <div class="field"><label>Scan mulai dipakai sejak tanggal</label><input type="date" id="setTanggalMulaiScan"></div>
+          <div class="helper">Sebelum tanggal ini, modal 100% dianggap Cash (Scan belum ada). Sisa modal di akhir periode tidak dibawa ke periode berikutnya — itu jadi bonus terpisah, bukan bagian saldo operasional.</div>
+          <button class="btn btn-primary" style="margin-top:14px;" onclick="saveModalAwal()">Simpan Modal Awal</button>
         </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2 class="section-title">Import Data Lama</h2>
+        <div class="helper" style="margin-bottom:10px;">Upload file JSON hasil konversi dari Excel/Gsheet lama. Kategori yang belum ada akan otomatis dibuat. Proses ini hanya menambah data baru, tidak menghapus yang sudah ada.</div>
+        <input type="file" id="importFile" accept="application/json" style="margin-bottom:10px;">
+        <div>
+          <button class="btn btn-primary" onclick="importTransaksiJSON()">Import Transaksi</button>
+        </div>
+        <div class="helper" id="importStatus" style="margin-top:10px;"></div>
       </div>
 
       <div class="card" style="margin-top:16px;">
@@ -482,7 +495,7 @@ let currentUser = null;
 let transaksiData = [];   // {id, tanggal, bukti, kategori, deskripsi, jumlah, currency, jumlahIDR, metode}
 let pinjamanData = [];    // {id, nama, tanggalPinjam, jumlah, metode, status, tanggalBayar, metodeBayar, catatan}
 let kategoriData = [];    // {id, nama, color}
-let settings = { kursUsdKhr: 4000, kursKhrIdr: 4, kursUsdIdr: 17900, saldoAwalCash: 0, saldoAwalScan: 0, saldoAwalTanggal: "2026-01-01" };
+let settings = { kursUsdKhr: 4000, kursKhrIdr: 4, kursUsdIdr: 17900, modalAwalUsd: 1000, splitCashUsd: 400, splitScanUsd: 600, tanggalMulaiScan: "2026-07-21" };
 let unsubs = [];
 let chartKategori = null;
 let dashPeriodOffset = 0; // 0 = current period, -1 previous, +1 next
@@ -652,29 +665,24 @@ function renderDashboard(){
   document.getElementById('dashPeriodLabel').textContent = 'Periode ' + period.label;
   document.getElementById('dashPeriodTag').textContent = '· 21–20';
 
-  // Running saldo as of end of selected period, from saldoAwal date
-  const cutoff = period.end;
-  const saldoStart = new Date((settings.saldoAwalTanggal || '2026-01-01') + 'T00:00:00');
-
-  let cash = Number(settings.saldoAwalCash)||0;
-  let scan = Number(settings.saldoAwalScan)||0;
+  // Saldo cash/scan: modal direset tiap periode (tidak akumulasi dari periode sebelumnya)
+  const modal = getModalPeriode(period);
+  let cash = modal.cashAwal;
+  let scan = modal.scanAwal;
 
   transaksiData.forEach(t => {
-    const d = new Date(t.tanggal + 'T00:00:00');
-    if(d >= saldoStart && d <= cutoff){
+    if(inRange(t.tanggal, period.start, period.end)){
       if(t.metode === 'cash') cash -= (t.jumlahIDR||0);
       else scan -= (t.jumlahIDR||0);
     }
   });
   pinjamanData.forEach(p => {
-    const dPinjam = new Date(p.tanggalPinjam + 'T00:00:00');
-    if(dPinjam >= saldoStart && dPinjam <= cutoff){
+    if(inRange(p.tanggalPinjam, period.start, period.end)){
       if(p.metode === 'cash') cash -= (p.jumlah||0);
       else scan -= (p.jumlah||0);
     }
     (p.pembayaran||[]).forEach(pay => {
-      const dBayar = new Date(pay.tanggal + 'T00:00:00');
-      if(dBayar >= saldoStart && dBayar <= cutoff){
+      if(inRange(pay.tanggal, period.start, period.end)){
         if(pay.metode === 'cash') cash += (pay.jumlah||0);
         else scan += (pay.jumlah||0);
       }
@@ -730,39 +738,34 @@ function renderDashboard(){
 }
 
 function renderSaldoBulanan(){
-  // Build list of periods that have any transaction, sorted desc
+  // Kumpulkan semua periode yang punya transaksi ATAU pinjaman, urut terbaru dulu
   const periodMap = {};
-  transaksiData.forEach(t => {
-    const p = getPeriode(t.tanggal);
-    if(!periodMap[p.key]) periodMap[p.key] = { label: p.label, total: 0, start: p.start, end: p.end };
-    periodMap[p.key].total += (t.jumlahIDR||0);
-  });
-  const keys = Object.keys(periodMap).sort().reverse();
-  const saldoStart = new Date((settings.saldoAwalTanggal || '2026-01-01') + 'T00:00:00');
+  function ensurePeriod(dateStr){
+    const p = getPeriode(dateStr);
+    if(!periodMap[p.key]) periodMap[p.key] = { label: p.label, start: p.start, end: p.end, keluar: 0 };
+    return periodMap[p.key];
+  }
+  transaksiData.forEach(t => { ensurePeriod(t.tanggal).keluar += (t.jumlahIDR||0); });
+  pinjamanData.forEach(p => { ensurePeriod(p.tanggalPinjam); (p.pembayaran||[]).forEach(pay => ensurePeriod(pay.tanggal)); });
 
+  const keys = Object.keys(periodMap).sort().reverse();
   const tbody = document.getElementById('tblSaldoBulanan');
   if(keys.length === 0){
-    tbody.innerHTML = '<tr><td colspan="3"><div class="empty-state"><div class="glyph">🗂️</div>Belum ada data</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="glyph">🗂️</div>Belum ada data</div></td></tr>';
     return;
   }
   tbody.innerHTML = keys.map(k => {
     const p = periodMap[k];
-    let cash = Number(settings.saldoAwalCash)||0, scan = Number(settings.saldoAwalScan)||0;
-    transaksiData.forEach(t => {
-      const d = new Date(t.tanggal+'T00:00:00');
-      if(d >= saldoStart && d <= p.end){
-        if(t.metode==='cash') cash -= (t.jumlahIDR||0); else scan -= (t.jumlahIDR||0);
-      }
-    });
+    const modal = getModalPeriode(p);
+    const modalTotal = modal.cashAwal + modal.scanAwal;
+
+    let pinjamKeluar = 0, pinjamMasuk = 0;
     pinjamanData.forEach(pj => {
-      const dP = new Date(pj.tanggalPinjam+'T00:00:00');
-      if(dP >= saldoStart && dP <= p.end){ if(pj.metode==='cash') cash -= pj.jumlah||0; else scan -= pj.jumlah||0; }
-      (pj.pembayaran||[]).forEach(pay => {
-        const dB = new Date(pay.tanggal+'T00:00:00');
-        if(dB >= saldoStart && dB <= p.end){ if(pay.metode==='cash') cash += pay.jumlah||0; else scan += pay.jumlah||0; }
-      });
+      if(inRange(pj.tanggalPinjam, p.start, p.end)) pinjamKeluar += (pj.jumlah||0);
+      (pj.pembayaran||[]).forEach(pay => { if(inRange(pay.tanggal, p.start, p.end)) pinjamMasuk += (pay.jumlah||0); });
     });
-    return `<tr><td><strong>${p.label}</strong></td><td>${fmtIDR(p.total)}</td><td>${fmtIDR(cash+scan)}</td></tr>`;
+    const sisa = modalTotal - p.keluar - pinjamKeluar + pinjamMasuk;
+    return `<tr><td><strong>${p.label}</strong></td><td class="mono">${fmtIDR(modalTotal)}</td><td class="mono">${fmtIDR(p.keluar)}</td><td class="mono">${fmtIDR(sisa)}</td></tr>`;
   }).join('');
 }
 
@@ -1010,9 +1013,10 @@ function fillSettingsForm(){
   document.getElementById('setKursUsdKhr').value = settings.kursUsdKhr;
   document.getElementById('setKursKhrIdr').value = settings.kursKhrIdr;
   document.getElementById('setKursUsdIdr').value = settings.kursUsdIdr;
-  document.getElementById('setSaldoAwalCash').value = settings.saldoAwalCash;
-  document.getElementById('setSaldoAwalScan').value = settings.saldoAwalScan;
-  document.getElementById('setSaldoAwalTanggal').value = settings.saldoAwalTanggal;
+  document.getElementById('setModalAwalUsd').value = settings.modalAwalUsd;
+  document.getElementById('setSplitCashUsd').value = settings.splitCashUsd;
+  document.getElementById('setSplitScanUsd').value = settings.splitScanUsd;
+  document.getElementById('setTanggalMulaiScan').value = settings.tanggalMulaiScan;
 }
 function saveKurs(){
   db.collection('settings').doc('main').set({
@@ -1021,12 +1025,26 @@ function saveKurs(){
     kursUsdIdr: Number(document.getElementById('setKursUsdIdr').value)||0,
   }, {merge:true}).then(()=>alert('Kurs disimpan.'));
 }
-function saveSaldoAwal(){
+function saveModalAwal(){
   db.collection('settings').doc('main').set({
-    saldoAwalCash: Number(document.getElementById('setSaldoAwalCash').value)||0,
-    saldoAwalScan: Number(document.getElementById('setSaldoAwalScan').value)||0,
-    saldoAwalTanggal: document.getElementById('setSaldoAwalTanggal').value,
-  }, {merge:true}).then(()=>alert('Saldo awal disimpan.'));
+    modalAwalUsd: Number(document.getElementById('setModalAwalUsd').value)||0,
+    splitCashUsd: Number(document.getElementById('setSplitCashUsd').value)||0,
+    splitScanUsd: Number(document.getElementById('setSplitScanUsd').value)||0,
+    tanggalMulaiScan: document.getElementById('setTanggalMulaiScan').value,
+  }, {merge:true}).then(()=>alert('Modal awal disimpan.'));
+}
+// Modal awal (IDR) untuk sebuah periode: reset tiap periode, tidak akumulasi.
+// Sebelum tanggalMulaiScan, seluruh modal dianggap Cash.
+function getModalPeriode(period){
+  const kurs = Number(settings.kursUsdIdr) || 0;
+  const scanActive = settings.tanggalMulaiScan && period.start >= new Date(settings.tanggalMulaiScan + 'T00:00:00');
+  if(scanActive){
+    return {
+      cashAwal: (Number(settings.splitCashUsd)||0) * kurs,
+      scanAwal: (Number(settings.splitScanUsd)||0) * kurs
+    };
+  }
+  return { cashAwal: (Number(settings.modalAwalUsd)||0) * kurs, scanAwal: 0 };
 }
 function renderKategoriUI(){
   const box = document.getElementById('kategoriList');
@@ -1042,6 +1060,70 @@ function addKategori(){
 }
 function deleteKategori(id){
   if(confirm('Hapus kategori ini?')) db.collection('kategori').doc(id).delete();
+}
+
+/* =========================================================
+   IMPORT DATA LAMA (dari Excel/Gsheet, dikonversi ke JSON)
+========================================================= */
+async function importTransaksiJSON(){
+  const fileInput = document.getElementById('importFile');
+  const statusEl = document.getElementById('importStatus');
+  const file = fileInput.files[0];
+  if(!file){ alert('Pilih file JSON dulu.'); return; }
+
+  statusEl.textContent = 'Membaca file…';
+  let records;
+  try {
+    const text = await file.text();
+    records = JSON.parse(text);
+    if(!Array.isArray(records)) throw new Error('Format bukan array JSON.');
+  } catch(e){
+    statusEl.textContent = '';
+    alert('Gagal baca file: ' + e.message);
+    return;
+  }
+
+  // Pastikan semua kategori yang dipakai record sudah ada, buat yang belum ada
+  statusEl.textContent = 'Menyiapkan kategori…';
+  const existingNames = new Set(kategoriData.map(k => k.nama));
+  const neededNames = [...new Set(records.map(r => r.kategori || 'Lain-lain'))];
+  const missing = neededNames.filter(n => !existingNames.has(n));
+  for(let i=0; i<missing.length; i++){
+    const color = KAT_PALETTE[(kategoriData.length + i) % KAT_PALETTE.length];
+    await db.collection('kategori').add({ nama: missing[i], color });
+  }
+
+  // Tulis transaksi dalam batch (maks 400 per batch demi aman di bawah limit Firestore)
+  statusEl.textContent = `Mengimpor ${records.length} transaksi…`;
+  const chunkSize = 400;
+  let imported = 0;
+  try {
+    for(let i=0; i<records.length; i += chunkSize){
+      const chunk = records.slice(i, i + chunkSize);
+      const batch = db.batch();
+      chunk.forEach(r => {
+        const ref = db.collection('transaksi').doc();
+        batch.set(ref, {
+          tanggal: r.tanggal,
+          bukti: r.bukti || '',
+          kategori: r.kategori || 'Lain-lain',
+          deskripsi: r.deskripsi || '',
+          currency: r.currency || 'IDR',
+          jumlah: Number(r.jumlah)||0,
+          jumlahIDR: Number(r.jumlahIDR != null ? r.jumlahIDR : r.jumlah)||0,
+          metode: r.metode === 'scan' ? 'scan' : 'cash'
+        });
+      });
+      await batch.commit();
+      imported += chunk.length;
+      statusEl.textContent = `Mengimpor… ${imported}/${records.length}`;
+    }
+    statusEl.textContent = `✓ Berhasil import ${imported} transaksi.`;
+    fileInput.value = '';
+  } catch(e){
+    statusEl.textContent = '';
+    alert('Gagal import: ' + e.message);
+  }
 }
 </script>
 </body>
