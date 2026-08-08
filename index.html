@@ -1089,16 +1089,21 @@ function renderSaldoBulanan(){
       });
     });
 
+    // Pengeluaran bersih harus mencakup efek pinjaman/cashbon
+    // agar Modal - Pengeluaran = Sisa selalu balance.
+    const pengeluaranBersih =
+      p.keluar +
+      pinjamKeluar -
+      pinjamMasuk;
+
     const sisa =
       modalTotal -
-      p.keluar -
-      pinjamKeluar +
-      pinjamMasuk;
+      pengeluaranBersih;
 
     return `<tr>
       <td><strong>${p.label}</strong></td>
       <td class="mono">${fmtCurrency(modalTotal)}</td>
-      <td class="mono">${fmtCurrency(p.keluar)}</td>
+      <td class="mono">${fmtCurrency(pengeluaranBersih)}</td>
       <td class="mono">${fmtCurrency(sisa)}</td>
     </tr>`;
   }).join('');
