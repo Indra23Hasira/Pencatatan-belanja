@@ -453,10 +453,18 @@
     <button class="close-x" onclick="closePinjamModal()">✕</button>
     <h3>Catat Pinjaman / Cashbon</h3>
     <div class="field"><label>Nama Peminjam</label><input type="text" id="pinjamNama" placeholder="Nama anggota tim"></div>
+    <div class="field"><label>Tanggal Pinjam</label><input type="date" id="pinjamTanggal"></div>
     <div class="grid g2">
-      <div class="field"><label>Tanggal Pinjam</label><input type="date" id="pinjamTanggal"></div>
-      <div class="field"><label>Jumlah (IDR)</label><input type="number" id="pinjamJumlah" step="any"></div>
+      <div class="field"><label>Mata Uang</label>
+        <select id="pinjamCurrency" onchange="updatePinjamKonversi()">
+          <option value="IDR">IDR</option>
+          <option value="USD">USD</option>
+          <option value="KHR">KHR (Riel)</option>
+        </select>
+      </div>
+      <div class="field"><label>Jumlah</label><input type="number" id="pinjamJumlah" step="any" oninput="updatePinjamKonversi()"></div>
     </div>
+    <div class="helper" id="pinjamKonversiHelper" style="margin-bottom:12px;"></div>
     <div class="field">
       <label>Diambil Dari</label>
       <div class="toggle-group" style="width:fit-content;">
@@ -483,7 +491,17 @@
       <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:4px;"><span style="color:var(--ink-soft);">Sisa Hutang</span><strong id="bayarInfoSisa" class="mono">—</strong></div>
     </div>
     <div class="field"><label>Tanggal Bayar</label><input type="date" id="bayarTanggal"></div>
-    <div class="field"><label>Jumlah Dibayar (IDR)</label><input type="number" id="bayarJumlah" step="any"></div>
+    <div class="grid g2">
+      <div class="field"><label>Mata Uang</label>
+        <select id="bayarCurrency" onchange="updateBayarKonversi()">
+          <option value="IDR">IDR</option>
+          <option value="USD">USD</option>
+          <option value="KHR">KHR (Riel)</option>
+        </select>
+      </div>
+      <div class="field"><label>Jumlah Dibayar</label><input type="number" id="bayarJumlah" step="any" oninput="updateBayarKonversi()"></div>
+    </div>
+    <div class="helper" id="bayarKonversiHelper" style="margin-bottom:6px;"></div>
     <div class="helper">Boleh diisi sebagian (cicilan) — sisa hutang otomatis dihitung ulang.</div>
     <div class="field" style="margin-top:10px;">
       <label>Dikembalikan Ke</label>
@@ -549,6 +567,18 @@ let dashDisplayCurrency = 'IDR';
 let trxMetode = 'cash';
 let pinjamMetode = 'cash';
 let bayarMetode = 'cash';
+function updatePinjamKonversi(){
+  const cur = document.getElementById('pinjamCurrency').value;
+  const jml = Number(document.getElementById('pinjamJumlah').value)||0;
+  const helper = document.getElementById('pinjamKonversiHelper');
+  helper.textContent = cur === 'IDR' ? '' : `≈ ${fmtIDR(toIDR(jml, cur))} (kurs dari Pengaturan)`;
+}
+function updateBayarKonversi(){
+  const cur = document.getElementById('bayarCurrency').value;
+  const jml = Number(document.getElementById('bayarJumlah').value)||0;
+  const helper = document.getElementById('bayarKonversiHelper');
+  helper.textContent = cur === 'IDR' ? '' : `≈ ${fmtIDR(toIDR(jml, cur))} (kurs dari Pengaturan)`;
+}
 let editingTrxId = null;
 let payingLoanId = null;
 
@@ -779,13 +809,15 @@ function renderDashboard(){
   });
   pinjamanData.forEach(p => {
     if(inRange(p.tanggalPinjam, period.start, period.end)){
-      if(p.metode === 'cash') cash -= (p.jumlah||0);
-      else scan -= (p.jumlah||0);
+      const jIDR = Number(p.jumlahIDR != null ? p.jumlahIDR : p.jumlah) || 0;
+      if(p.metode === 'cash') cash -= jIDR;
+      else scan -= jIDR;
     }
     (p.pembayaran||[]).forEach(pay => {
       if(inRange(pay.tanggal, period.start, period.end)){
-        if(pay.metode === 'cash') cash += (pay.jumlah||0);
-        else scan += (pay.jumlah||0);
+        const payIDR = Number(pay.jumlahIDR != null ? pay.jumlahIDR : pay.jumlah) || 0;
+        if(pay.metode === 'cash') cash += payIDR;
+        else scan += payIDR;
       }
     });
   });
@@ -862,8 +894,8 @@ function renderSaldoBulanan(){
 
     let pinjamKeluar = 0, pinjamMasuk = 0;
     pinjamanData.forEach(pj => {
-      if(inRange(pj.tanggalPinjam, p.start, p.end)) pinjamKeluar += (pj.jumlah||0);
-      (pj.pembayaran||[]).forEach(pay => { if(inRange(pay.tanggal, p.start, p.end)) pinjamMasuk += (pay.jumlah||0); });
+      if(inRange(pj.tanggalPinjam, p.start, p.end)) pinjamKeluar += Number(pj.jumlahIDR != null ? pj.jumlahIDR : pj.jumlah) || 0;
+      (pj.pembayaran||[]).forEach(pay => { if(inRange(pay.tanggal, p.start, p.end)) pinjamMasuk += Number(pay.jumlahIDR != null ? pay.jumlahIDR : pay.jumlah) || 0; });
     });
     const sisa = modalTotal - p.keluar - pinjamKeluar + pinjamMasuk;
     return `<tr><td><strong>${p.label}</strong></td><td class="mono">${fmtCurrency(modalTotal)}</td><td class="mono">${fmtCurrency(p.keluar)}</td><td class="mono">${fmtCurrency(sisa)}</td></tr>`;
@@ -1005,7 +1037,9 @@ function setPinjamMetode(m){
 function openPinjamModal(){
   document.getElementById('pinjamNama').value = '';
   document.getElementById('pinjamTanggal').value = new Date().toISOString().slice(0,10);
+  document.getElementById('pinjamCurrency').value = 'IDR';
   document.getElementById('pinjamJumlah').value = '';
+  document.getElementById('pinjamKonversiHelper').textContent = '';
   document.getElementById('pinjamCatatan').value = '';
   setPinjamMetode('cash');
   document.getElementById('pinjamModalBg').style.display = 'flex';
@@ -1014,11 +1048,13 @@ function closePinjamModal(){ document.getElementById('pinjamModalBg').style.disp
 function savePinjam(){
   const nama = document.getElementById('pinjamNama').value.trim();
   const tanggalPinjam = document.getElementById('pinjamTanggal').value;
+  const currency = document.getElementById('pinjamCurrency').value;
   const jumlah = Number(document.getElementById('pinjamJumlah').value);
   const catatan = document.getElementById('pinjamCatatan').value.trim();
   if(!nama || !tanggalPinjam || !jumlah){ alert('Lengkapi nama, tanggal, dan jumlah.'); return; }
+  const jumlahIDR = toIDR(jumlah, currency);
   db.collection('pinjaman').add({
-    nama, tanggalPinjam, jumlah, metode: pinjamMetode, catatan, status: 'belum', pembayaran: []
+    nama, tanggalPinjam, currency, jumlah, jumlahIDR, metode: pinjamMetode, catatan, status: 'belum', pembayaran: []
   }).then(closePinjamModal).catch(e => alert('Gagal simpan: '+e.message));
 }
 function setBayarMetode(m){
@@ -1027,10 +1063,11 @@ function setBayarMetode(m){
   document.getElementById('bayarMetodeScan').classList.toggle('active-scan', m==='scan');
 }
 function loanTerbayar(p){
-  return (p.pembayaran||[]).reduce((s,pay) => s + (Number(pay.jumlah)||0), 0);
+  return (p.pembayaran||[]).reduce((s,pay) => s + (Number(pay.jumlahIDR != null ? pay.jumlahIDR : pay.jumlah)||0), 0);
 }
 function loanSisa(p){
-  return Math.max(0, (Number(p.jumlah)||0) - loanTerbayar(p));
+  const totalIDR = Number(p.jumlahIDR != null ? p.jumlahIDR : p.jumlah) || 0;
+  return Math.max(0, totalIDR - loanTerbayar(p));
 }
 function loanStatus(p){
   const sisa = loanSisa(p);
@@ -1042,31 +1079,36 @@ function openBayarModal(id){
   payingLoanId = id;
   const p = pinjamanData.find(x => x.id === id);
   if(!p) return;
+  const totalIDR = Number(p.jumlahIDR != null ? p.jumlahIDR : p.jumlah) || 0;
   const terbayar = loanTerbayar(p);
   const sisa = loanSisa(p);
-  document.getElementById('bayarInfoTotal').textContent = fmtIDR(p.jumlah);
+  document.getElementById('bayarInfoTotal').textContent = fmtIDR(totalIDR);
   document.getElementById('bayarInfoTerbayar').textContent = fmtIDR(terbayar);
   document.getElementById('bayarInfoSisa').textContent = fmtIDR(sisa);
   document.getElementById('bayarTanggal').value = new Date().toISOString().slice(0,10);
+  document.getElementById('bayarCurrency').value = 'IDR';
   document.getElementById('bayarJumlah').value = sisa;
-  document.getElementById('bayarJumlah').max = sisa;
+  document.getElementById('bayarKonversiHelper').textContent = '';
   setBayarMetode('cash');
   document.getElementById('bayarModalBg').style.display = 'flex';
 }
 function closeBayarModal(){ document.getElementById('bayarModalBg').style.display = 'none'; }
 function confirmBayar(){
   const tanggalBayar = document.getElementById('bayarTanggal').value;
+  const currency = document.getElementById('bayarCurrency').value;
   const jumlahBayar = Number(document.getElementById('bayarJumlah').value);
   if(!tanggalBayar || !jumlahBayar || jumlahBayar <= 0){ alert('Isi tanggal dan jumlah bayar yang valid.'); return; }
+  const jumlahBayarIDR = toIDR(jumlahBayar, currency);
   const p = pinjamanData.find(x => x.id === payingLoanId);
   if(!p) return;
   const sisa = loanSisa(p);
-  if(jumlahBayar > sisa + 0.01){ alert('Jumlah bayar melebihi sisa hutang (' + fmtIDR(sisa) + ').'); return; }
+  if(jumlahBayarIDR > sisa + 1){ alert('Jumlah bayar melebihi sisa hutang (' + fmtIDR(sisa) + ').'); return; }
   const pembayaranBaru = (p.pembayaran||[]).concat([{
     id: Date.now() + '_' + Math.random().toString(36).slice(2,7),
-    tanggal: tanggalBayar, jumlah: jumlahBayar, metode: bayarMetode
+    tanggal: tanggalBayar, currency, jumlah: jumlahBayar, jumlahIDR: jumlahBayarIDR, metode: bayarMetode
   }]);
-  const newSisa = Math.max(0, (Number(p.jumlah)||0) - pembayaranBaru.reduce((s,x)=>s+(Number(x.jumlah)||0),0));
+  const totalIDR = Number(p.jumlahIDR != null ? p.jumlahIDR : p.jumlah) || 0;
+  const newSisa = Math.max(0, totalIDR - pembayaranBaru.reduce((s,x)=>s+(Number(x.jumlahIDR != null ? x.jumlahIDR : x.jumlah)||0),0));
   db.collection('pinjaman').doc(payingLoanId).update({
     pembayaran: pembayaranBaru,
     status: newSisa <= 0 ? 'lunas' : 'sebagian'
@@ -1090,10 +1132,14 @@ function renderPinjaman(){
       : status==='sebagian' ? `<span class="badge-status" style="background:var(--gold-soft);color:var(--gold);">Sebagian</span>`
       : `<span class="badge-status badge-belum">Belum Lunas</span>`;
     const actionBtn = status==='lunas' ? '' : `<button class="btn btn-primary btn-sm" onclick="openBayarModal('${p.id}')">Bayar</button>`;
-    const jumlahCell = status==='belum' ? fmtIDR(p.jumlah)
-      : `${fmtIDR(p.jumlah)}<div style="color:var(--ink-soft);font-size:11px;">terbayar ${fmtIDR(terbayar)} · sisa ${fmtIDR(sisa)}</div>`;
+    const totalIDR = Number(p.jumlahIDR != null ? p.jumlahIDR : p.jumlah) || 0;
+    const pokokDisp = (p.currency && p.currency !== 'IDR')
+      ? `${p.currency} ${Number(p.jumlah).toLocaleString('id-ID')} <span style="color:var(--ink-soft);font-size:11px;">(${fmtIDR(totalIDR)})</span>`
+      : fmtIDR(totalIDR);
+    const jumlahCell = status==='belum' ? pokokDisp
+      : `${pokokDisp}<div style="color:var(--ink-soft);font-size:11px;">terbayar ${fmtIDR(terbayar)} · sisa ${fmtIDR(sisa)}</div>`;
     const riwayat = (p.pembayaran||[]).length
-      ? `<div style="color:var(--ink-soft);font-size:11px;margin-top:2px;">${(p.pembayaran||[]).map(pay => fmtDate(pay.tanggal)+' ('+(pay.metode==='cash'?'Cash':'Scan')+')').join(', ')}</div>`
+      ? `<div style="color:var(--ink-soft);font-size:11px;margin-top:2px;">${(p.pembayaran||[]).map(pay => fmtDate(pay.tanggal)+' ('+(pay.metode==='cash'?'Cash':'Scan')+(pay.currency && pay.currency!=='IDR' ? ', '+pay.currency+' '+Number(pay.jumlah).toLocaleString('id-ID') : '')+')').join(', ')}</div>`
       : '—';
     return `<tr>
       <td><strong>${p.nama}</strong>${p.catatan?`<div style="color:var(--ink-soft);font-size:11.5px;">${p.catatan}</div>`:''}</td>
