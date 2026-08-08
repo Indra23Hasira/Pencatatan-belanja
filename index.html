@@ -692,6 +692,24 @@ function attachListeners(){
 
   unsubs.push(db.collection('transaksi').orderBy('tanggal','desc').onSnapshot(snap => {
     transaksiData = snap.docs.map(d => ({id:d.id, ...d.data()}));
+
+    // Firestore hanya mengurutkan berdasarkan tanggal di server.
+    // Kalau beberapa transaksi punya tanggal yang sama, urutan input
+    // harus ditentukan dari createdAt agar transaksi terakhir tampil paling atas.
+    transaksiData.sort((a, b) => {
+      const dateCompare = String(b.tanggal || '').localeCompare(String(a.tanggal || ''));
+      if(dateCompare !== 0) return dateCompare;
+
+      const aMs = a.createdAt && typeof a.createdAt.toMillis === 'function'
+        ? a.createdAt.toMillis()
+        : (typeof a.createdAt === 'number' ? a.createdAt : 0);
+      const bMs = b.createdAt && typeof b.createdAt.toMillis === 'function'
+        ? b.createdAt.toMillis()
+        : (typeof b.createdAt === 'number' ? b.createdAt : 0);
+
+      return bMs - aMs;
+    });
+
     renderTransaksi();
     renderDashboard();
   }));
@@ -1207,6 +1225,13 @@ function saveTrx(){
   if(!tanggal || !kategori || !jumlah){ alert('Lengkapi tanggal, kategori, dan jumlah.'); return; }
   const jumlahIDR = toIDR(jumlah, currency);
   const payload = { tanggal, bukti, kategori, deskripsi, currency, jumlah, jumlahIDR, metode: trxMetode };
+
+  // Simpan waktu input hanya saat transaksi BARU dibuat.
+  // Saat transaksi diedit, createdAt tidak berubah sehingga urutan asli tetap terjaga.
+  if(!editingTrxId){
+    payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+  }
+
   const promise = editingTrxId
     ? db.collection('transaksi').doc(editingTrxId).update(payload)
     : db.collection('transaksi').add(payload);
