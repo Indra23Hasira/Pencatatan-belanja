@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Buku Kas — Pencatatan Pengeluaran</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --paper:#F5F5F0;
+    --card:#FFFFFF;
+    --ink:#15181B;
+    --ink-soft:#585F66;
+    --line:#DEDCD2;
+    --ledger-green:#2F5D50;
+    --ledger-green-soft:#E7EFEC;
+    --rust:#AE4A26;
+    --rust-soft:#F6E7DF;
+    --gold:#B9852F;
+    --gold-soft:#F5EBD8;
+    --tab-fold:#15181B;
+    --radius:10px;
+    --shadow:0 1px 2px rgba(21,24,27,0.06), 0 8px 24px -12px rgba(21,24,27,0.12);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px);
+    background-size: 100% 32px;
+    background-position: 0 120px;
+  }
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  .display{font-family:'Fraunces',serif;}
+  a{color:inherit;}
+  button{font-family:inherit;cursor:pointer;}
+  ::selection{background:var(--gold-soft);}
+
+  /* ---- Auth screen ---- */
+  #authScreen{
+    min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:var(--ink);
+    background-image: radial-gradient(circle at 20% 20%, rgba(255,255,255,0.04), transparent 40%);
+    padding:24px;
+  }
+  .auth-card{
+    background:var(--paper);
+    border-radius:14px;
+    width:100%;max-width:380px;
+    padding:40px 32px 32px;
+    box-shadow:0 30px 60px -20px rgba(0,0,0,0.5);
+    position:relative;
+    overflow:hidden;
+  }
+  .auth-card::before{
+    content:"";
+    position:absolute;top:0;left:0;right:0;height:6px;
+    background:repeating-linear-gradient(90deg, var(--ledger-green) 0 18px, var(--gold) 18px 36px, var(--rust) 36px 54px);
+  }
+  .auth-title{font-family:'Fraunces',serif;font-size:26px;font-weight:600;margin:8px 0 2px;}
+  .auth-sub{color:var(--ink-soft);font-size:13px;margin-bottom:28px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px;font-weight:600;}
+  .field input, select, textarea{
+    width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:7px;
+    background:var(--card);font-size:14px;color:var(--ink);font-family:inherit;
+  }
+  .field input:focus, select:focus, textarea:focus{outline:2px solid var(--ledger-green);outline-offset:1px;border-color:var(--ledger-green);}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    padding:10px 16px;border-radius:7px;border:1px solid transparent;font-size:13.5px;font-weight:600;
+    transition:transform .08s ease, box-shadow .15s ease;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--ledger-green);color:#fff;}
+  .btn-primary:hover{box-shadow:0 4px 14px -4px rgba(47,93,80,.5);}
+  .btn-outline{background:transparent;border-color:var(--line);color:var(--ink);}
+  .btn-outline:hover{border-color:var(--ink);}
+  .btn-block{width:100%;}
+  .btn-rust{background:var(--rust);color:#fff;}
+  .btn-gold{background:var(--gold);color:#fff;}
+  .btn-sm{padding:6px 10px;font-size:12px;border-radius:6px;}
+  .err{color:var(--rust);font-size:12.5px;margin-top:10px;min-height:1em;}
+  .divider{display:flex;align-items:center;gap:10px;color:var(--ink-soft);font-size:11px;margin:18px 0;text-transform:uppercase;letter-spacing:.06em;}
+  .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line);}
+
+  /* ---- App shell ---- */
+  #appShell{display:none;min-height:100vh;}
+  .topbar{
+    position:sticky;top:0;z-index:30;
+    background:var(--ink);color:#fff;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 20px;
+  }
+  .topbar .brand{display:flex;align-items:center;gap:10px;}
+  .brand-mark{width:26px;height:26px;border-radius:5px;background:linear-gradient(135deg,var(--ledger-green),var(--gold));flex:none;}
+  .brand-text{font-family:'Fraunces',serif;font-weight:600;font-size:17px;}
+  .brand-user{font-size:11.5px;color:#B9BEC3;}
+  .topbar-right{display:flex;align-items:center;gap:10px;}
+  .icon-btn{background:rgba(255,255,255,0.08);border:none;color:#fff;padding:8px 10px;border-radius:7px;font-size:12px;}
+
+  .tabs{
+    display:flex;gap:2px;background:var(--tab-fold);padding:0 16px;overflow-x:auto;
+  }
+  .tab-btn{
+    background:transparent;border:none;color:#B9BEC3;padding:12px 16px;font-size:13px;font-weight:600;
+    border-bottom:3px solid transparent;white-space:nowrap;letter-spacing:.01em;
+  }
+  .tab-btn.active{color:#fff;border-bottom-color:var(--gold);background:rgba(255,255,255,0.03);}
+
+  .container{max-width:1180px;margin:0 auto;padding:24px 20px 80px;}
+  .grid{display:grid;gap:16px;}
+  .g4{grid-template-columns:repeat(4,1fr);}
+  .g3{grid-template-columns:repeat(3,1fr);}
+  .g2{grid-template-columns:1fr 1fr;}
+  @media (max-width:900px){ .g4{grid-template-columns:repeat(2,1fr);} .g3{grid-template-columns:1fr 1fr;} .g2{grid-template-columns:1fr;} }
+  @media (max-width:560px){ .g4{grid-template-columns:1fr 1fr;} }
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;}
+  .card-tight{padding:14px 16px;}
+  .stat-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);font-weight:600;margin-bottom:6px;}
+  .stat-value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;}
+  .stat-sub{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+  .pill-green{background:var(--ledger-green-soft);color:var(--ledger-green);}
+  .pill-rust{background:var(--rust-soft);color:var(--rust);}
+  .pill-gold{background:var(--gold-soft);color:var(--gold);}
+
+  h2.section-title{font-family:'Fraunces',serif;font-size:19px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;gap:10px;}
+  h2.section-title .n{color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;font-size:13px;}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    background:var(--ink);color:#fff;text-align:left;padding:10px 12px;font-size:11px;
+    text-transform:uppercase;letter-spacing:.04em;font-weight:600;position:sticky;top:0;
+  }
+  tbody td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  tbody tr:hover{background:#FAFAF5;}
+  .table-wrap{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--line);}
+  .table-wrap table{border-radius:var(--radius);overflow:hidden;}
+
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:16px;}
+  .toolbar-left{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+
+  .toggle-group{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
+  .toggle-opt{padding:8px 14px;font-size:12.5px;font-weight:600;background:var(--card);border:none;color:var(--ink-soft);}
+  .toggle-opt.active-cash{background:var(--ledger-green);color:#fff;}
+  .toggle-opt.active-scan{background:var(--gold);color:#fff;}
+
+  .modal-bg{
+    display:none;position:fixed;inset:0;background:rgba(21,24,27,0.55);z-index:50;
+    align-items:center;justify-content:center;padding:20px;
+  }
+  .modal{background:var(--paper);border-radius:12px;max-width:480px;width:100%;padding:26px;max-height:90vh;overflow-y:auto;box-shadow:0 30px 70px -20px rgba(0,0,0,.5);}
+  .modal h3{font-family:'Fraunces',serif;font-size:19px;margin:0 0 16px;}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}
+
+  .empty-state{text-align:center;padding:40px 20px;color:var(--ink-soft);}
+  .empty-state .glyph{font-size:28px;margin-bottom:8px;}
+
+  .kat-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:4px 10px;border-radius:20px;background:var(--paper);border:1px solid var(--line);}
+  .kat-dot{width:8px;height:8px;border-radius:50%;flex:none;}
+
+  .cash-dot{color:var(--ledger-green);}
+  .scan-dot{color:var(--gold);}
+
+  .loading{display:flex;align-items:center;gap:8px;color:var(--ink-soft);font-size:13px;padding:16px;}
+  .spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--ledger-green);animation:spin .7s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .close-x{position:absolute;top:14px;right:14px;background:none;border:none;font-size:18px;color:var(--ink-soft);}
+
+  .helper{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+
+  .badge-status{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;}
+  .badge-belum{background:var(--rust-soft);color:var(--rust);}
+  .badge-lunas{background:var(--ledger-green-soft);color:var(--ledger-green);}
+
+  .period-nav{display:flex;align-items:center;gap:10px;}
+  .period-nav button{background:var(--card);border:1px solid var(--line);border-radius:7px;width:30px;height:30px;font-size:14px;}
+  .period-label{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;min-width:150px;text-align:center;}
+
+  footer.app-footer{text-align:center;color:var(--ink-soft);font-size:11px;padding:20px;}
+</style>
+</head>
+<body>
+
+<!-- ================= AUTH SCREEN ================= -->
+<div id="authScreen">
+  <div class="auth-card">
+    <div class="auth-title">Buku Kas</div>
+    <div class="auth-sub">Masuk untuk mencatat pengeluaran, kas, dan pinjaman tim.</div>
+
+    <button class="btn btn-outline btn-block" onclick="signInGoogle()">
+      <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.9 32.4 29.4 35 24 35c-6.1 0-11-4.9-11-11s4.9-11 11-11c2.8 0 5.3 1 7.3 2.7l5.7-5.7C33.5 6.9 29 5 24 5 13.5 5 5 13.5 5 24s8.5 19 19 19 19-8.5 19-19c0-1.3-.1-2.5-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 16 19 13 24 13c2.8 0 5.3 1 7.3 2.7l5.7-5.7C33.5 6.9 29 5 24 5c-7.6 0-14.1 4.3-17.7 9.7z"/><path fill="#4CAF50" d="M24 43c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 34.1 26.7 35 24 35c-5.4 0-9.9-3.5-11.5-8.4l-6.5 5C9.7 38.6 16.3 43 24 43z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.1 3-3.4 5.4-6.1 6.9l6.2 5.2C38.4 37.4 43 31.3 43 24c0-1.3-.1-2.5-.4-3.5z"/></svg>
+      Masuk dengan Google
+    </button>
+
+    <div class="divider">atau email</div>
+
+    <div class="field"><label>Email</label><input id="loginEmail" type="email" placeholder="nama@email.com"></div>
+    <div class="field"><label>Kata sandi</label><input id="loginPass" type="password" placeholder="••••••••"></div>
+    <button class="btn btn-primary btn-block" onclick="signInEmail()">Masuk</button>
+    <button class="btn btn-outline btn-block" style="margin-top:8px;" onclick="registerEmail()">Daftar akun baru</button>
+    <div class="err" id="authErr"></div>
+  </div>
+</div>
+
+<!-- ================= APP SHELL ================= -->
+<div id="appShell">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <div class="brand-text">Buku Kas</div>
+        <div class="brand-user" id="userLabel"></div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="icon-btn" onclick="logout()">Keluar</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</button>
+    <button class="tab-btn" data-tab="transaksi" onclick="switchTab('transaksi')">Transaksi</button>
+    <button class="tab-btn" data-tab="pinjaman" onclick="switchTab('pinjaman')">Pinjaman / Cashbon</button>
+    <button class="tab-btn" data-tab="pengaturan" onclick="switchTab('pengaturan')">Pengaturan</button>
+  </div>
+
+  <div class="container">
+
+    <!-- ---------- DASHBOARD ---------- -->
+    <div id="tab-dashboard">
+      <div class="toolbar">
+        <h2 class="section-title">Ringkasan <span class="n" id="dashPeriodTag"></span></h2>
+        <div class="period-nav">
+          <button onclick="shiftDashPeriod(-1)">‹</button>
+          <div class="period-label" id="dashPeriodLabel">—</div>
+          <button onclick="shiftDashPeriod(1)">›</button>
+        </div>
+      </div>
+
+      <div class="grid g4" style="margin-bottom:16px;">
+        <div class="card">
+          <div class="stat-label">Saldo Cash</div>
+          <div class="stat-value" id="statSaldoCash">Rp 0</div>
+          <div class="stat-sub">Uang tunai saat ini</div>
+        </div>
+        <div class="card">
+          <div class="stat-label">Saldo Scan</div>
+          <div class="stat-value" id="statSaldoScan">Rp 0</div>
+          <div class="stat-sub">QRIS / transfer / e-wallet</div>
+        </div>
+        <div class="card">
+          <div class="stat-label">Pengeluaran Periode Ini</div>
+          <div class="stat-value" id="statPengeluaran">Rp 0</div>
+          <div class="stat-sub" id="statPengeluaranSub">—</div>
+        </div>
+        <div class="card">
+          <div class="stat-label">Piutang Belum Dibayar</div>
+          <div class="stat-value" id="statPiutang">Rp 0</div>
+          <div class="stat-sub" id="statPiutangSub">dari pinjaman tim</div>
+        </div>
+      </div>
+
+      <div class="grid g2" style="margin-bottom:16px;">
+        <div class="card">
+          <h2 class="section-title">Pengeluaran per Kategori</h2>
+          <div style="position:relative;height:280px;">
+            <canvas id="chartKategori"></canvas>
+          </div>
+          <div id="legendKategori" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;"></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Saldo per Periode (Bulan)</h2>
+          <div class="table-wrap" style="max-height:340px;overflow-y:auto;">
+            <table>
+              <thead><tr><th>Periode</th><th>Pengeluaran</th><th>Saldo Akhir</th></tr></thead>
+              <tbody id="tblSaldoBulanan"><tr><td colspan="3"><div class="loading"><div class="spinner"></div>Memuat…</div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- TRANSAKSI ---------- -->
+    <div id="tab-transaksi" style="display:none;">
+      <div class="toolbar">
+        <h2 class="section-title">Transaksi <span class="n" id="trxCountTag"></span></h2>
+        <div class="toolbar-left">
+          <input type="month" id="trxFilterMonth" style="padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;" onchange="renderTransaksi()">
+          <select id="trxFilterKategori" style="padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;" onchange="renderTransaksi()">
+            <option value="">Semua Kategori</option>
+          </select>
+          <select id="trxFilterMetode" style="padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;" onchange="renderTransaksi()">
+            <option value="">Semua Metode</option>
+            <option value="cash">💵 Cash</option>
+            <option value="scan">📱 Scan</option>
+          </select>
+          <button class="btn btn-outline" onclick="exportTransaksiCSV()">⭳ Export Excel</button>
+          <button class="btn btn-primary" onclick="openTrxModal()">+ Catat Pengeluaran</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Tanggal</th><th>Bukti</th><th>Kategori</th><th>Deskripsi</th><th>Metode</th><th>Jumlah</th><th></th></tr></thead>
+          <tbody id="tblTransaksi"><tr><td colspan="7"><div class="loading"><div class="spinner"></div>Memuat…</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ---------- PINJAMAN ---------- -->
+    <div id="tab-pinjaman" style="display:none;">
+      <div class="toolbar">
+        <h2 class="section-title">Pinjaman / Cashbon Tim</h2>
+        <button class="btn btn-primary" onclick="openPinjamModal()">+ Catat Pinjaman</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nama</th><th>Tgl Pinjam</th><th>Metode</th><th>Jumlah</th><th>Status</th><th>Tgl Bayar</th><th></th></tr></thead>
+          <tbody id="tblPinjaman"><tr><td colspan="7"><div class="loading"><div class="spinner"></div>Memuat…</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ---------- PENGATURAN ---------- -->
+    <div id="tab-pengaturan" style="display:none;">
+      <div class="grid g2">
+        <div class="card">
+          <h2 class="section-title">Kurs Mata Uang</h2>
+          <div class="field"><label>USD → KHR (Riel)</label><input type="number" id="setKursUsdKhr" step="any" placeholder="cth. 4000"></div>
+          <div class="field"><label>KHR → IDR</label><input type="number" id="setKursKhrIdr" step="any" placeholder="cth. 4"></div>
+          <div class="field"><label>USD → IDR</label><input type="number" id="setKursUsdIdr" step="any" placeholder="cth. 17900"></div>
+          <div class="helper">Nilai ini dipakai untuk mengonversi transaksi USD/KHR ke IDR secara otomatis.</div>
+          <button class="btn btn-primary" style="margin-top:14px;" onclick="saveKurs()">Simpan Kurs</button>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Saldo Awal</h2>
+          <div class="field"><label>Saldo Awal Cash (IDR)</label><input type="number" id="setSaldoAwalCash" step="any"></div>
+          <div class="field"><label>Saldo Awal Scan (IDR)</label><input type="number" id="setSaldoAwalScan" step="any"></div>
+          <div class="field"><label>Berlaku sejak tanggal</label><input type="date" id="setSaldoAwalTanggal"></div>
+          <div class="helper">Semua transaksi sebelum tanggal ini tidak dihitung ke saldo berjalan.</div>
+          <button class="btn btn-primary" style="margin-top:14px;" onclick="saveSaldoAwal()">Simpan Saldo Awal</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2 class="section-title">Kategori Pengeluaran</h2>
+        <div id="kategoriList" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
+        <div style="display:flex;gap:10px;max-width:420px;">
+          <input id="newKatName" placeholder="Nama kategori baru" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:7px;">
+          <button class="btn btn-outline" onclick="addKategori()">Tambah</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <footer class="app-footer">Buku Kas · Periode berjalan tanggal 21 – 20 setiap bulan</footer>
+</div>
+
+<!-- ================= MODAL: TRANSAKSI ================= -->
+<div class="modal-bg" id="trxModalBg">
+  <div class="modal" style="position:relative;">
+    <button class="close-x" onclick="closeTrxModal()">✕</button>
+    <h3 id="trxModalTitle">Catat Pengeluaran</h3>
+    <div class="grid g2">
+      <div class="field"><label>Tanggal</label><input type="date" id="trxTanggal"></div>
+      <div class="field"><label>No. Bukti / Nota</label><input type="text" id="trxBukti" placeholder="cth. NB-0021"></div>
+    </div>
+    <div class="field"><label>Kategori</label><select id="trxKategori"></select></div>
+    <div class="field"><label>Deskripsi</label><textarea id="trxDeskripsi" rows="2" placeholder="Belanja apa, untuk apa…"></textarea></div>
+    <div class="grid g2">
+      <div class="field"><label>Mata Uang</label>
+        <select id="trxCurrency" onchange="updateTrxKonversi()">
+          <option value="IDR">IDR</option>
+          <option value="USD">USD</option>
+          <option value="KHR">KHR (Riel)</option>
+        </select>
+      </div>
+      <div class="field"><label>Jumlah Keluar</label><input type="number" id="trxJumlah" step="any" oninput="updateTrxKonversi()"></div>
+    </div>
+    <div class="helper" id="trxKonversiHelper" style="margin-bottom:12px;"></div>
+    <div class="field">
+      <label>Sumber Dana</label>
+      <div class="toggle-group" style="width:fit-content;">
+        <button type="button" class="toggle-opt active-cash" id="trxMetodeCash" onclick="setTrxMetode('cash')">💵 Cash</button>
+        <button type="button" class="toggle-opt" id="trxMetodeScan" onclick="setTrxMetode('scan')">📱 Scan</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeTrxModal()">Batal</button>
+      <button class="btn btn-primary" onclick="saveTrx()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= MODAL: PINJAMAN ================= -->
+<div class="modal-bg" id="pinjamModalBg">
+  <div class="modal" style="position:relative;">
+    <button class="close-x" onclick="closePinjamModal()">✕</button>
+    <h3>Catat Pinjaman / Cashbon</h3>
+    <div class="field"><label>Nama Peminjam</label><input type="text" id="pinjamNama" placeholder="Nama anggota tim"></div>
+    <div class="grid g2">
+      <div class="field"><label>Tanggal Pinjam</label><input type="date" id="pinjamTanggal"></div>
+      <div class="field"><label>Jumlah (IDR)</label><input type="number" id="pinjamJumlah" step="any"></div>
+    </div>
+    <div class="field">
+      <label>Diambil Dari</label>
+      <div class="toggle-group" style="width:fit-content;">
+        <button type="button" class="toggle-opt active-cash" id="pinjamMetodeCash" onclick="setPinjamMetode('cash')">💵 Cash</button>
+        <button type="button" class="toggle-opt" id="pinjamMetodeScan" onclick="setPinjamMetode('scan')">📱 Scan</button>
+      </div>
+    </div>
+    <div class="field"><label>Catatan (opsional)</label><input type="text" id="pinjamCatatan" placeholder="cth. keperluan bensin"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closePinjamModal()">Batal</button>
+      <button class="btn btn-primary" onclick="savePinjam()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= MODAL: BAYAR HUTANG ================= -->
+<div class="modal-bg" id="bayarModalBg">
+  <div class="modal" style="position:relative;">
+    <button class="close-x" onclick="closeBayarModal()">✕</button>
+    <h3>Bayar Hutang</h3>
+    <div class="card-tight" style="background:var(--paper);border:1px solid var(--line);border-radius:7px;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:var(--ink-soft);">Total Pinjaman</span><strong id="bayarInfoTotal" class="mono">—</strong></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:4px;"><span style="color:var(--ink-soft);">Sudah Dibayar</span><strong id="bayarInfoTerbayar" class="mono">—</strong></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:4px;"><span style="color:var(--ink-soft);">Sisa Hutang</span><strong id="bayarInfoSisa" class="mono">—</strong></div>
+    </div>
+    <div class="field"><label>Tanggal Bayar</label><input type="date" id="bayarTanggal"></div>
+    <div class="field"><label>Jumlah Dibayar (IDR)</label><input type="number" id="bayarJumlah" step="any"></div>
+    <div class="helper">Boleh diisi sebagian (cicilan) — sisa hutang otomatis dihitung ulang.</div>
+    <div class="field" style="margin-top:10px;">
+      <label>Dikembalikan Ke</label>
+      <div class="toggle-group" style="width:fit-content;">
+        <button type="button" class="toggle-opt active-cash" id="bayarMetodeCash" onclick="setBayarMetode('cash')">💵 Cash</button>
+        <button type="button" class="toggle-opt" id="bayarMetodeScan" onclick="setBayarMetode('scan')">📱 Scan</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeBayarModal()">Batal</button>
+      <button class="btn btn-primary" onclick="confirmBayar()">Simpan Pembayaran</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   FIREBASE CONFIG
+   Ganti dengan config project Firebase kamu sendiri
+   (bisa reuse project yang sama dengan aset-indra / Monthly-budget,
+   asal buat collection baru khusus app ini agar tidak bentrok data).
+========================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyCUzZ1VYr4yZoVY7SZAVQ6z955Gow7-DKo",
+  authDomain: "pencatatan-belanja-22697.firebaseapp.com",
+  projectId: "pencatatan-belanja-22697",
+  storageBucket: "pencatatan-belanja-22697.firebasestorage.app",
+  messagingSenderId: "379937439047",
+  appId: "1:379937439047:web:4e815556ed296a411a2062"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+/* =========================================================
+   STATE
+========================================================= */
+let currentUser = null;
+let transaksiData = [];   // {id, tanggal, bukti, kategori, deskripsi, jumlah, currency, jumlahIDR, metode}
+let pinjamanData = [];    // {id, nama, tanggalPinjam, jumlah, metode, status, tanggalBayar, metodeBayar, catatan}
+let kategoriData = [];    // {id, nama, color}
+let settings = { kursUsdKhr: 4000, kursKhrIdr: 4, kursUsdIdr: 17900, saldoAwalCash: 0, saldoAwalScan: 0, saldoAwalTanggal: "2026-01-01" };
+let unsubs = [];
+let chartKategori = null;
+let dashPeriodOffset = 0; // 0 = current period, -1 previous, +1 next
+let trxMetode = 'cash';
+let pinjamMetode = 'cash';
+let bayarMetode = 'cash';
+let editingTrxId = null;
+let payingLoanId = null;
+
+const KAT_PALETTE = ['#2F5D50','#B9852F','#AE4A26','#4C6B8A','#7A5C8E','#6E8B3D','#B0555E','#3C7A89'];
+
+/* =========================================================
+   AUTH
+========================================================= */
+function signInGoogle(){
+  const p = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(p).catch(e => showAuthErr(e.message));
+}
+function signInEmail(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  if(!email || !pass){ showAuthErr('Isi email dan kata sandi.'); return; }
+  auth.signInWithEmailAndPassword(email, pass).catch(e => showAuthErr(e.message));
+}
+function registerEmail(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  if(!email || !pass){ showAuthErr('Isi email dan kata sandi.'); return; }
+  if(pass.length < 6){ showAuthErr('Kata sandi minimal 6 karakter.'); return; }
+  auth.createUserWithEmailAndPassword(email, pass).catch(e => showAuthErr(e.message));
+}
+function showAuthErr(msg){ document.getElementById('authErr').textContent = msg; }
+function logout(){ auth.signOut(); }
+
+auth.onAuthStateChanged(user => {
+  if(user){
+    currentUser = user;
+    document.getElementById('authScreen').style.display = 'none';
+    document.getElementById('appShell').style.display = 'block';
+    document.getElementById('userLabel').textContent = user.email || user.displayName || 'Masuk';
+    attachListeners();
+  } else {
+    currentUser = null;
+    unsubs.forEach(u => u());
+    unsubs = [];
+    document.getElementById('authScreen').style.display = 'flex';
+    document.getElementById('appShell').style.display = 'none';
+  }
+});
+
+/* =========================================================
+   FIRESTORE LISTENERS (shared ledger — semua user login lihat data yang sama)
+========================================================= */
+function attachListeners(){
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('trxTanggal').value = today;
+  document.getElementById('pinjamTanggal').value = today;
+  document.getElementById('bayarTanggal').value = today;
+
+  unsubs.push(db.collection('settings').doc('main').onSnapshot(doc => {
+    if(doc.exists){
+      settings = Object.assign(settings, doc.data());
+    } else {
+      db.collection('settings').doc('main').set(settings);
+    }
+    fillSettingsForm();
+    renderDashboard();
+  }));
+
+  unsubs.push(db.collection('kategori').orderBy('nama').onSnapshot(snap => {
+    kategoriData = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    if(kategoriData.length === 0) seedKategori();
+    renderKategoriUI();
+    renderDashboard();
+  }));
+
+  unsubs.push(db.collection('transaksi').orderBy('tanggal','desc').onSnapshot(snap => {
+    transaksiData = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderTransaksi();
+    renderDashboard();
+  }));
+
+  unsubs.push(db.collection('pinjaman').orderBy('tanggalPinjam','desc').onSnapshot(snap => {
+    pinjamanData = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderPinjaman();
+    renderDashboard();
+  }));
+}
+
+function seedKategori(){
+  const defaults = ['Bahan Baku','Operasional','Gaji / Upah','Listrik & Air','Transportasi','Maintenance Alat','Lain-lain'];
+  defaults.forEach((nama, i) => {
+    db.collection('kategori').add({ nama, color: KAT_PALETTE[i % KAT_PALETTE.length] });
+  });
+}
+
+/* =========================================================
+   TABS
+========================================================= */
+function switchTab(tab){
+  ['dashboard','transaksi','pinjaman','pengaturan'].forEach(t => {
+    document.getElementById('tab-'+t).style.display = (t===tab) ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+}
+
+/* =========================================================
+   HELPERS: currency + period
+========================================================= */
+function toIDR(jumlah, currency){
+  jumlah = Number(jumlah) || 0;
+  if(currency === 'IDR') return jumlah;
+  if(currency === 'USD') return jumlah * (Number(settings.kursUsdIdr) || 0);
+  if(currency === 'KHR') return jumlah * (Number(settings.kursKhrIdr) || 0);
+  return jumlah;
+}
+function fmtIDR(n){
+  n = Math.round(Number(n)||0);
+  return 'Rp ' + n.toLocaleString('id-ID');
+}
+function fmtDate(d){
+  if(!d) return '—';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
+}
+// Periode berjalan tanggal 21 - 20. Nama periode = bulan tanggal mulai (21).
+function getPeriode(dateStr){
+  const d = new Date(dateStr + 'T00:00:00');
+  let periodStartMonth = d.getMonth(); // 0-indexed
+  let periodStartYear = d.getFullYear();
+  if(d.getDate() < 21){
+    periodStartMonth -= 1;
+    if(periodStartMonth < 0){ periodStartMonth = 11; periodStartYear -= 1; }
+  }
+  const start = new Date(periodStartYear, periodStartMonth, 21);
+  const end = new Date(periodStartYear, periodStartMonth + 1, 20);
+  const monthNames = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  const key = periodStartYear + '-' + String(periodStartMonth+1).padStart(2,'0');
+  const label = monthNames[periodStartMonth] + ' ' + periodStartYear;
+  return { key, label, start, end };
+}
+function periodeFromOffset(offset){
+  const now = new Date();
+  const base = getPeriode(now.toISOString().slice(0,10));
+  const m = base.start.getMonth() + offset;
+  const y = base.start.getFullYear() + Math.floor(m/12 >= 0 ? m/12 : (m-11)/12);
+  const normMonth = ((m % 12) + 12) % 12;
+  const start = new Date(base.start.getFullYear(), base.start.getMonth() + offset, 21);
+  const end = new Date(start.getFullYear(), start.getMonth() + 1, 20);
+  const monthNames = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  const key = start.getFullYear() + '-' + String(start.getMonth()+1).padStart(2,'0');
+  const label = monthNames[start.getMonth()] + ' ' + start.getFullYear();
+  return { key, label, start, end };
+}
+function inRange(dateStr, start, end){
+  const d = new Date(dateStr + 'T00:00:00');
+  return d >= start && d <= end;
+}
+
+/* =========================================================
+   DASHBOARD
+========================================================= */
+function shiftDashPeriod(delta){ dashPeriodOffset += delta; renderDashboard(); }
+
+function renderDashboard(){
+  const period = periodeFromOffset(dashPeriodOffset);
+  document.getElementById('dashPeriodLabel').textContent = 'Periode ' + period.label;
+  document.getElementById('dashPeriodTag').textContent = '· 21–20';
+
+  // Running saldo as of end of selected period, from saldoAwal date
+  const cutoff = period.end;
+  const saldoStart = new Date((settings.saldoAwalTanggal || '2026-01-01') + 'T00:00:00');
+
+  let cash = Number(settings.saldoAwalCash)||0;
+  let scan = Number(settings.saldoAwalScan)||0;
+
+  transaksiData.forEach(t => {
+    const d = new Date(t.tanggal + 'T00:00:00');
+    if(d >= saldoStart && d <= cutoff){
+      if(t.metode === 'cash') cash -= (t.jumlahIDR||0);
+      else scan -= (t.jumlahIDR||0);
+    }
+  });
+  pinjamanData.forEach(p => {
+    const dPinjam = new Date(p.tanggalPinjam + 'T00:00:00');
+    if(dPinjam >= saldoStart && dPinjam <= cutoff){
+      if(p.metode === 'cash') cash -= (p.jumlah||0);
+      else scan -= (p.jumlah||0);
+    }
+    (p.pembayaran||[]).forEach(pay => {
+      const dBayar = new Date(pay.tanggal + 'T00:00:00');
+      if(dBayar >= saldoStart && dBayar <= cutoff){
+        if(pay.metode === 'cash') cash += (pay.jumlah||0);
+        else scan += (pay.jumlah||0);
+      }
+    });
+  });
+
+  document.getElementById('statSaldoCash').textContent = fmtIDR(cash);
+  document.getElementById('statSaldoScan').textContent = fmtIDR(scan);
+
+  // Pengeluaran periode ini (transaksi within selected period only)
+  const trxThisPeriod = transaksiData.filter(t => inRange(t.tanggal, period.start, period.end));
+  const totalKeluar = trxThisPeriod.reduce((s,t) => s + (t.jumlahIDR||0), 0);
+  document.getElementById('statPengeluaran').textContent = fmtIDR(totalKeluar);
+  document.getElementById('statPengeluaranSub').textContent = trxThisPeriod.length + ' transaksi';
+
+  // Piutang belum dibayar (all time, not period-bound) — pakai sisa hutang agar cicilan/parsial terhitung
+  const belumLunas = pinjamanData.filter(p => loanStatus(p) !== 'lunas');
+  const totalPiutang = belumLunas.reduce((s,p) => s + loanSisa(p), 0);
+  document.getElementById('statPiutang').textContent = fmtIDR(totalPiutang);
+  document.getElementById('statPiutangSub').textContent = belumLunas.length + ' orang belum lunas';
+
+  // Pie chart per kategori (periode ini)
+  const byKat = {};
+  trxThisPeriod.forEach(t => {
+    const kat = t.kategori || 'Lain-lain';
+    byKat[kat] = (byKat[kat]||0) + (t.jumlahIDR||0);
+  });
+  const labels = Object.keys(byKat);
+  const values = labels.map(l => byKat[l]);
+  const colors = labels.map(l => {
+    const k = kategoriData.find(k => k.nama === l);
+    return k ? k.color : '#999';
+  });
+
+  const ctx = document.getElementById('chartKategori').getContext('2d');
+  if(chartKategori) chartKategori.destroy();
+  if(labels.length === 0){
+    document.getElementById('legendKategori').innerHTML = '<div class="empty-state" style="padding:10px;"><div class="glyph">📊</div>Belum ada transaksi periode ini</div>';
+  } else {
+    chartKategori = new Chart(ctx, {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 2, borderColor: '#fff' }]},
+      options: { plugins: { legend: { display:false } }, cutout: '62%' }
+    });
+    const legend = document.getElementById('legendKategori');
+    legend.innerHTML = labels.map((l,i) => {
+      const pct = totalKeluar ? Math.round(values[i]/totalKeluar*100) : 0;
+      return `<div class="kat-chip"><span class="kat-dot" style="background:${colors[i]}"></span>${l} · ${pct}%</div>`;
+    }).join('');
+  }
+
+  renderSaldoBulanan();
+}
+
+function renderSaldoBulanan(){
+  // Build list of periods that have any transaction, sorted desc
+  const periodMap = {};
+  transaksiData.forEach(t => {
+    const p = getPeriode(t.tanggal);
+    if(!periodMap[p.key]) periodMap[p.key] = { label: p.label, total: 0, start: p.start, end: p.end };
+    periodMap[p.key].total += (t.jumlahIDR||0);
+  });
+  const keys = Object.keys(periodMap).sort().reverse();
+  const saldoStart = new Date((settings.saldoAwalTanggal || '2026-01-01') + 'T00:00:00');
+
+  const tbody = document.getElementById('tblSaldoBulanan');
+  if(keys.length === 0){
+    tbody.innerHTML = '<tr><td colspan="3"><div class="empty-state"><div class="glyph">🗂️</div>Belum ada data</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = keys.map(k => {
+    const p = periodMap[k];
+    let cash = Number(settings.saldoAwalCash)||0, scan = Number(settings.saldoAwalScan)||0;
+    transaksiData.forEach(t => {
+      const d = new Date(t.tanggal+'T00:00:00');
+      if(d >= saldoStart && d <= p.end){
+        if(t.metode==='cash') cash -= (t.jumlahIDR||0); else scan -= (t.jumlahIDR||0);
+      }
+    });
+    pinjamanData.forEach(pj => {
+      const dP = new Date(pj.tanggalPinjam+'T00:00:00');
+      if(dP >= saldoStart && dP <= p.end){ if(pj.metode==='cash') cash -= pj.jumlah||0; else scan -= pj.jumlah||0; }
+      (pj.pembayaran||[]).forEach(pay => {
+        const dB = new Date(pay.tanggal+'T00:00:00');
+        if(dB >= saldoStart && dB <= p.end){ if(pay.metode==='cash') cash += pay.jumlah||0; else scan += pay.jumlah||0; }
+      });
+    });
+    return `<tr><td><strong>${p.label}</strong></td><td>${fmtIDR(p.total)}</td><td>${fmtIDR(cash+scan)}</td></tr>`;
+  }).join('');
+}
+
+/* =========================================================
+   TRANSAKSI
+========================================================= */
+function fillKategoriSelect(){
+  const sel = document.getElementById('trxKategori');
+  sel.innerHTML = kategoriData.map(k => `<option value="${k.nama}">${k.nama}</option>`).join('');
+}
+function setTrxMetode(m){
+  trxMetode = m;
+  document.getElementById('trxMetodeCash').classList.toggle('active-cash', m==='cash');
+  document.getElementById('trxMetodeScan').classList.toggle('active-scan', m==='scan');
+}
+function updateTrxKonversi(){
+  const cur = document.getElementById('trxCurrency').value;
+  const jml = Number(document.getElementById('trxJumlah').value)||0;
+  const idr = toIDR(jml, cur);
+  const helper = document.getElementById('trxKonversiHelper');
+  helper.textContent = cur === 'IDR' ? '' : `≈ ${fmtIDR(idr)} (kurs dari Pengaturan)`;
+}
+function openTrxModal(trx){
+  editingTrxId = trx ? trx.id : null;
+  document.getElementById('trxModalTitle').textContent = trx ? 'Ubah Pengeluaran' : 'Catat Pengeluaran';
+  fillKategoriSelect();
+  document.getElementById('trxTanggal').value = trx ? trx.tanggal : new Date().toISOString().slice(0,10);
+  document.getElementById('trxBukti').value = trx ? trx.bukti||'' : '';
+  document.getElementById('trxKategori').value = trx ? trx.kategori : (kategoriData[0]?.nama||'');
+  document.getElementById('trxDeskripsi').value = trx ? trx.deskripsi||'' : '';
+  document.getElementById('trxCurrency').value = trx ? trx.currency : 'IDR';
+  document.getElementById('trxJumlah').value = trx ? trx.jumlah : '';
+  setTrxMetode(trx ? trx.metode : 'cash');
+  updateTrxKonversi();
+  document.getElementById('trxModalBg').style.display = 'flex';
+}
+function closeTrxModal(){ document.getElementById('trxModalBg').style.display = 'none'; }
+function saveTrx(){
+  const tanggal = document.getElementById('trxTanggal').value;
+  const bukti = document.getElementById('trxBukti').value.trim();
+  const kategori = document.getElementById('trxKategori').value;
+  const deskripsi = document.getElementById('trxDeskripsi').value.trim();
+  const currency = document.getElementById('trxCurrency').value;
+  const jumlah = Number(document.getElementById('trxJumlah').value);
+  if(!tanggal || !kategori || !jumlah){ alert('Lengkapi tanggal, kategori, dan jumlah.'); return; }
+  const jumlahIDR = toIDR(jumlah, currency);
+  const payload = { tanggal, bukti, kategori, deskripsi, currency, jumlah, jumlahIDR, metode: trxMetode };
+  const promise = editingTrxId
+    ? db.collection('transaksi').doc(editingTrxId).update(payload)
+    : db.collection('transaksi').add(payload);
+  promise.then(closeTrxModal).catch(e => alert('Gagal simpan: '+e.message));
+}
+function deleteTrx(id){
+  if(confirm('Hapus transaksi ini?')) db.collection('transaksi').doc(id).delete();
+}
+function fillTrxFilterKategori(){
+  const sel = document.getElementById('trxFilterKategori');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Semua Kategori</option>' + kategoriData.map(k => `<option value="${k.nama}">${k.nama}</option>`).join('');
+  sel.value = current;
+}
+function getFilteredTransaksi(){
+  const filterMonth = document.getElementById('trxFilterMonth').value;
+  const filterKat = document.getElementById('trxFilterKategori').value;
+  const filterMetode = document.getElementById('trxFilterMetode').value;
+  let rows = transaksiData;
+  if(filterMonth) rows = rows.filter(t => t.tanggal && t.tanggal.startsWith(filterMonth));
+  if(filterKat) rows = rows.filter(t => t.kategori === filterKat);
+  if(filterMetode) rows = rows.filter(t => t.metode === filterMetode);
+  return rows;
+}
+function renderTransaksi(){
+  fillTrxFilterKategori();
+  document.getElementById('trxCountTag').textContent = '· ' + transaksiData.length + ' total';
+  const rows = getFilteredTransaksi();
+  const tbody = document.getElementById('tblTransaksi');
+  if(rows.length === 0){
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="glyph">🧾</div>Belum ada transaksi. Klik "Catat Pengeluaran" untuk mulai.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(t => {
+    const kat = kategoriData.find(k=>k.nama===t.kategori);
+    const dotColor = kat ? kat.color : '#999';
+    const metodeBadge = t.metode==='cash' ? `<span class="pill pill-green">💵 Cash</span>` : `<span class="pill pill-gold">📱 Scan</span>`;
+    const jumlahDisp = t.currency !== 'IDR' ? `${t.currency} ${Number(t.jumlah).toLocaleString('id-ID')} <span style="color:var(--ink-soft);font-size:11px;">(${fmtIDR(t.jumlahIDR)})</span>` : fmtIDR(t.jumlahIDR);
+    return `<tr>
+      <td class="mono">${fmtDate(t.tanggal)}</td>
+      <td>${t.bukti||'—'}</td>
+      <td><span class="kat-chip"><span class="kat-dot" style="background:${dotColor}"></span>${t.kategori}</span></td>
+      <td>${t.deskripsi||'—'}</td>
+      <td>${metodeBadge}</td>
+      <td class="mono">${jumlahDisp}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn btn-outline btn-sm" onclick='openTrxModal(${JSON.stringify(t).replace(/'/g,"&#39;")})'>Ubah</button>
+        <button class="btn btn-rust btn-sm" onclick="deleteTrx('${t.id}')">Hapus</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+function csvEscape(v){
+  if(v === null || v === undefined) return '';
+  const s = String(v).replace(/"/g,'""');
+  return /[",\n]/.test(s) ? `"${s}"` : s;
+}
+function exportTransaksiCSV(){
+  const rows = getFilteredTransaksi();
+  if(rows.length === 0){ alert('Tidak ada transaksi untuk diexport.'); return; }
+  const header = ['Tanggal','No Bukti','Kategori','Deskripsi','Metode','Mata Uang','Jumlah','Jumlah (IDR)'];
+  const lines = [header.join(',')];
+  rows.forEach(t => {
+    lines.push([
+      t.tanggal, csvEscape(t.bukti), csvEscape(t.kategori), csvEscape(t.deskripsi),
+      t.metode==='cash'?'Cash':'Scan', t.currency, t.jumlah, Math.round(t.jumlahIDR||0)
+    ].join(','));
+  });
+  const total = rows.reduce((s,t)=>s+(t.jumlahIDR||0),0);
+  lines.push('');
+  lines.push(',,,,,,Total,' + Math.round(total));
+  const blob = new Blob(["\uFEFF" + lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'transaksi_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* =========================================================
+   PINJAMAN
+========================================================= */
+function setPinjamMetode(m){
+  pinjamMetode = m;
+  document.getElementById('pinjamMetodeCash').classList.toggle('active-cash', m==='cash');
+  document.getElementById('pinjamMetodeScan').classList.toggle('active-scan', m==='scan');
+}
+function openPinjamModal(){
+  document.getElementById('pinjamNama').value = '';
+  document.getElementById('pinjamTanggal').value = new Date().toISOString().slice(0,10);
+  document.getElementById('pinjamJumlah').value = '';
+  document.getElementById('pinjamCatatan').value = '';
+  setPinjamMetode('cash');
+  document.getElementById('pinjamModalBg').style.display = 'flex';
+}
+function closePinjamModal(){ document.getElementById('pinjamModalBg').style.display = 'none'; }
+function savePinjam(){
+  const nama = document.getElementById('pinjamNama').value.trim();
+  const tanggalPinjam = document.getElementById('pinjamTanggal').value;
+  const jumlah = Number(document.getElementById('pinjamJumlah').value);
+  const catatan = document.getElementById('pinjamCatatan').value.trim();
+  if(!nama || !tanggalPinjam || !jumlah){ alert('Lengkapi nama, tanggal, dan jumlah.'); return; }
+  db.collection('pinjaman').add({
+    nama, tanggalPinjam, jumlah, metode: pinjamMetode, catatan, status: 'belum', pembayaran: []
+  }).then(closePinjamModal).catch(e => alert('Gagal simpan: '+e.message));
+}
+function setBayarMetode(m){
+  bayarMetode = m;
+  document.getElementById('bayarMetodeCash').classList.toggle('active-cash', m==='cash');
+  document.getElementById('bayarMetodeScan').classList.toggle('active-scan', m==='scan');
+}
+function loanTerbayar(p){
+  return (p.pembayaran||[]).reduce((s,pay) => s + (Number(pay.jumlah)||0), 0);
+}
+function loanSisa(p){
+  return Math.max(0, (Number(p.jumlah)||0) - loanTerbayar(p));
+}
+function loanStatus(p){
+  const sisa = loanSisa(p);
+  if(sisa <= 0) return 'lunas';
+  if(loanTerbayar(p) > 0) return 'sebagian';
+  return 'belum';
+}
+function openBayarModal(id){
+  payingLoanId = id;
+  const p = pinjamanData.find(x => x.id === id);
+  if(!p) return;
+  const terbayar = loanTerbayar(p);
+  const sisa = loanSisa(p);
+  document.getElementById('bayarInfoTotal').textContent = fmtIDR(p.jumlah);
+  document.getElementById('bayarInfoTerbayar').textContent = fmtIDR(terbayar);
+  document.getElementById('bayarInfoSisa').textContent = fmtIDR(sisa);
+  document.getElementById('bayarTanggal').value = new Date().toISOString().slice(0,10);
+  document.getElementById('bayarJumlah').value = sisa;
+  document.getElementById('bayarJumlah').max = sisa;
+  setBayarMetode('cash');
+  document.getElementById('bayarModalBg').style.display = 'flex';
+}
+function closeBayarModal(){ document.getElementById('bayarModalBg').style.display = 'none'; }
+function confirmBayar(){
+  const tanggalBayar = document.getElementById('bayarTanggal').value;
+  const jumlahBayar = Number(document.getElementById('bayarJumlah').value);
+  if(!tanggalBayar || !jumlahBayar || jumlahBayar <= 0){ alert('Isi tanggal dan jumlah bayar yang valid.'); return; }
+  const p = pinjamanData.find(x => x.id === payingLoanId);
+  if(!p) return;
+  const sisa = loanSisa(p);
+  if(jumlahBayar > sisa + 0.01){ alert('Jumlah bayar melebihi sisa hutang (' + fmtIDR(sisa) + ').'); return; }
+  const pembayaranBaru = (p.pembayaran||[]).concat([{
+    id: Date.now() + '_' + Math.random().toString(36).slice(2,7),
+    tanggal: tanggalBayar, jumlah: jumlahBayar, metode: bayarMetode
+  }]);
+  const newSisa = Math.max(0, (Number(p.jumlah)||0) - pembayaranBaru.reduce((s,x)=>s+(Number(x.jumlah)||0),0));
+  db.collection('pinjaman').doc(payingLoanId).update({
+    pembayaran: pembayaranBaru,
+    status: newSisa <= 0 ? 'lunas' : 'sebagian'
+  }).then(closeBayarModal).catch(e => alert('Gagal: '+e.message));
+}
+function deletePinjam(id){
+  if(confirm('Hapus catatan pinjaman ini?')) db.collection('pinjaman').doc(id).delete();
+}
+function renderPinjaman(){
+  const tbody = document.getElementById('tblPinjaman');
+  if(pinjamanData.length === 0){
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="glyph">🤝</div>Belum ada pinjaman/cashbon tercatat</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = pinjamanData.map(p => {
+    const metodeBadge = p.metode==='cash' ? `<span class="pill pill-green">💵 Cash</span>` : `<span class="pill pill-gold">📱 Scan</span>`;
+    const status = loanStatus(p);
+    const sisa = loanSisa(p);
+    const terbayar = loanTerbayar(p);
+    const statusBadge = status==='lunas' ? `<span class="badge-status badge-lunas">Lunas</span>`
+      : status==='sebagian' ? `<span class="badge-status" style="background:var(--gold-soft);color:var(--gold);">Sebagian</span>`
+      : `<span class="badge-status badge-belum">Belum Lunas</span>`;
+    const actionBtn = status==='lunas' ? '' : `<button class="btn btn-primary btn-sm" onclick="openBayarModal('${p.id}')">Bayar</button>`;
+    const jumlahCell = status==='belum' ? fmtIDR(p.jumlah)
+      : `${fmtIDR(p.jumlah)}<div style="color:var(--ink-soft);font-size:11px;">terbayar ${fmtIDR(terbayar)} · sisa ${fmtIDR(sisa)}</div>`;
+    const riwayat = (p.pembayaran||[]).length
+      ? `<div style="color:var(--ink-soft);font-size:11px;margin-top:2px;">${(p.pembayaran||[]).map(pay => fmtDate(pay.tanggal)+' ('+(pay.metode==='cash'?'Cash':'Scan')+')').join(', ')}</div>`
+      : '—';
+    return `<tr>
+      <td><strong>${p.nama}</strong>${p.catatan?`<div style="color:var(--ink-soft);font-size:11.5px;">${p.catatan}</div>`:''}</td>
+      <td class="mono">${fmtDate(p.tanggalPinjam)}</td>
+      <td>${metodeBadge}</td>
+      <td class="mono">${jumlahCell}</td>
+      <td>${statusBadge}</td>
+      <td class="mono">${riwayat}</td>
+      <td style="white-space:nowrap;">${actionBtn} <button class="btn btn-outline btn-sm" onclick="deletePinjam('${p.id}')">Hapus</button></td>
+    </tr>`;
+  }).join('');
+}
+
+/* =========================================================
+   PENGATURAN
+========================================================= */
+function fillSettingsForm(){
+  document.getElementById('setKursUsdKhr').value = settings.kursUsdKhr;
+  document.getElementById('setKursKhrIdr').value = settings.kursKhrIdr;
+  document.getElementById('setKursUsdIdr').value = settings.kursUsdIdr;
+  document.getElementById('setSaldoAwalCash').value = settings.saldoAwalCash;
+  document.getElementById('setSaldoAwalScan').value = settings.saldoAwalScan;
+  document.getElementById('setSaldoAwalTanggal').value = settings.saldoAwalTanggal;
+}
+function saveKurs(){
+  db.collection('settings').doc('main').set({
+    kursUsdKhr: Number(document.getElementById('setKursUsdKhr').value)||0,
+    kursKhrIdr: Number(document.getElementById('setKursKhrIdr').value)||0,
+    kursUsdIdr: Number(document.getElementById('setKursUsdIdr').value)||0,
+  }, {merge:true}).then(()=>alert('Kurs disimpan.'));
+}
+function saveSaldoAwal(){
+  db.collection('settings').doc('main').set({
+    saldoAwalCash: Number(document.getElementById('setSaldoAwalCash').value)||0,
+    saldoAwalScan: Number(document.getElementById('setSaldoAwalScan').value)||0,
+    saldoAwalTanggal: document.getElementById('setSaldoAwalTanggal').value,
+  }, {merge:true}).then(()=>alert('Saldo awal disimpan.'));
+}
+function renderKategoriUI(){
+  const box = document.getElementById('kategoriList');
+  box.innerHTML = kategoriData.map(k => `<div class="kat-chip"><span class="kat-dot" style="background:${k.color}"></span>${k.nama}
+    <button style="border:none;background:none;color:var(--rust);cursor:pointer;font-weight:700;" onclick="deleteKategori('${k.id}')">×</button></div>`).join('');
+}
+function addKategori(){
+  const input = document.getElementById('newKatName');
+  const nama = input.value.trim();
+  if(!nama) return;
+  const color = KAT_PALETTE[kategoriData.length % KAT_PALETTE.length];
+  db.collection('kategori').add({ nama, color }).then(()=>{ input.value=''; });
+}
+function deleteKategori(id){
+  if(confirm('Hapus kategori ini?')) db.collection('kategori').doc(id).delete();
+}
+</script>
+</body>
+</html>
