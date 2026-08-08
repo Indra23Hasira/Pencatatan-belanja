@@ -761,21 +761,31 @@ function setDashCurrency(cur){
   });
   renderDashboard();
 }
-// Format nilai IDR ke mata uang sekunder (yang ditampilkan di dalam kurung pada tabel Transaksi/Pinjaman)
-function fmtSecondary(amountIDR){
-  amountIDR = Number(amountIDR) || 0;
-  const cur = settings.secondaryCurrency || 'IDR';
-  if(cur === 'USD'){
-    const kurs = Number(settings.kursUsdIdr) || 0;
-    const usd = kurs > 0 ? amountIDR / kurs : 0;
-    return '$ ' + usd.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-  }
-  if(cur === 'KHR'){
-    const kurs = Number(settings.kursKhrIdr) || 0;
-    const khr = kurs > 0 ? amountIDR / kurs : 0;
-    return '៛ ' + Math.round(khr).toLocaleString('id-ID');
-  }
-  return fmtIDR(amountIDR);
+// Konversi langsung antar pasangan mata uang (IDR/USD/KHR).
+// Untuk pasangan USD<->KHR pakai kurs langsung (kursUsdKhr), bukan muter lewat IDR.
+function convertAmount(amount, fromCur, toCur){
+  amount = Number(amount) || 0;
+  fromCur = fromCur || 'IDR';
+  if(fromCur === toCur) return amount;
+  const usdIdr = Number(settings.kursUsdIdr) || 0;
+  const khrIdr = Number(settings.kursKhrIdr) || 0;
+  const usdKhr = Number(settings.kursUsdKhr) || 0;
+  if(fromCur === 'USD' && toCur === 'KHR') return amount * usdKhr;
+  if(fromCur === 'KHR' && toCur === 'USD') return usdKhr > 0 ? amount / usdKhr : 0;
+  // Pasangan lain (melibatkan IDR) pakai IDR sebagai poros
+  const idr = fromCur === 'IDR' ? amount : (fromCur === 'USD' ? amount * usdIdr : amount * khrIdr);
+  if(toCur === 'IDR') return idr;
+  if(toCur === 'USD') return usdIdr > 0 ? idr / usdIdr : 0;
+  if(toCur === 'KHR') return khrIdr > 0 ? idr / khrIdr : 0;
+  return idr;
+}
+// Format nilai transaksi/pinjaman ke mata uang sekunder (kurung), konversi LANGSUNG dari mata uang aslinya
+function fmtSecondary(amountOriginal, fromCurrency){
+  const targetCur = settings.secondaryCurrency || 'IDR';
+  const converted = convertAmount(amountOriginal, fromCurrency || 'IDR', targetCur);
+  if(targetCur === 'USD') return '$ ' + converted.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  if(targetCur === 'KHR') return '៛ ' + Math.round(converted).toLocaleString('id-ID');
+  return fmtIDR(converted);
 }
 // Periode berjalan tanggal 21 - 20. Nama periode = bulan tanggal mulai (21).
 function getPeriode(dateStr){
@@ -1011,8 +1021,8 @@ function renderTransaksi(){
     const trxOwnCur = t.currency || 'IDR';
     const showSecondaryTrx = (settings.secondaryCurrency || 'IDR') !== trxOwnCur;
     const jumlahDisp = trxOwnCur !== 'IDR'
-      ? `${trxOwnCur} ${Number(t.jumlah).toLocaleString('id-ID')}${showSecondaryTrx ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(t.jumlahIDR)})</span>` : ''}`
-      : `${fmtIDR(t.jumlahIDR)}${showSecondaryTrx ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(t.jumlahIDR)})</span>` : ''}`;
+      ? `${trxOwnCur} ${Number(t.jumlah).toLocaleString('id-ID')}${showSecondaryTrx ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(t.jumlah, trxOwnCur)})</span>` : ''}`
+      : `${fmtIDR(t.jumlahIDR)}${showSecondaryTrx ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(t.jumlahIDR, 'IDR')})</span>` : ''}`;
     return `<tr>
       <td class="mono">${fmtDate(t.tanggal)}</td>
       <td>${t.bukti||'—'}</td>
@@ -1165,8 +1175,8 @@ function renderPinjaman(){
     const pinjamOwnCur = p.currency || 'IDR';
     const showSecondaryPinjam = (settings.secondaryCurrency || 'IDR') !== pinjamOwnCur;
     const pokokDisp = pinjamOwnCur !== 'IDR'
-      ? `${pinjamOwnCur} ${Number(p.jumlah).toLocaleString('id-ID')}${showSecondaryPinjam ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(totalIDR)})</span>` : ''}`
-      : `${fmtIDR(totalIDR)}${showSecondaryPinjam ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(totalIDR)})</span>` : ''}`;
+      ? `${pinjamOwnCur} ${Number(p.jumlah).toLocaleString('id-ID')}${showSecondaryPinjam ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(p.jumlah, pinjamOwnCur)})</span>` : ''}`
+      : `${fmtIDR(totalIDR)}${showSecondaryPinjam ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(totalIDR, 'IDR')})</span>` : ''}`;
     const jumlahCell = status==='belum' ? pokokDisp
       : `${pokokDisp}<div style="color:var(--ink-soft);font-size:11px;">terbayar ${fmtIDR(terbayar)} · sisa ${fmtIDR(sisa)}</div>`;
     const riwayat = (p.pembayaran||[]).length
