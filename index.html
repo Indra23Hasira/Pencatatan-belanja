@@ -222,6 +222,7 @@
       </div>
     </div>
     <div class="topbar-right">
+      <button class="icon-btn" id="btnSetPassword" onclick="openSetPasswordModal()" style="display:none;">🔑 Atur Kata Sandi</button>
       <button class="icon-btn" onclick="logout()">Keluar</button>
     </div>
   </div>
@@ -498,6 +499,22 @@
   </div>
 </div>
 
+<!-- ================= MODAL: ATUR KATA SANDI ================= -->
+<div class="modal-bg" id="setPasswordModalBg">
+  <div class="modal" style="position:relative;">
+    <button class="close-x" onclick="closeSetPasswordModal()">✕</button>
+    <h3>Atur Kata Sandi</h3>
+    <div class="helper" style="margin-bottom:14px;">Ini akan menambahkan login manual (email + kata sandi) ke akun kamu yang sekarang <strong id="setPwEmail"></strong> — jadi kamu bisa masuk lewat Google ATAU lewat email/kata sandi, dua-duanya menuju akun & data yang sama.</div>
+    <div class="field"><label>Kata Sandi Baru</label><input type="password" id="newPassword" placeholder="Minimal 6 karakter"></div>
+    <div class="field"><label>Ulangi Kata Sandi</label><input type="password" id="newPasswordConfirm"></div>
+    <div class="err" id="setPwErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeSetPasswordModal()">Batal</button>
+      <button class="btn btn-primary" onclick="confirmSetPassword()">Simpan Kata Sandi</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* =========================================================
    FIREBASE CONFIG
@@ -555,10 +572,40 @@ function registerEmail(){
   const pass = document.getElementById('loginPass').value;
   if(!email || !pass){ showAuthErr('Isi email dan kata sandi.'); return; }
   if(pass.length < 6){ showAuthErr('Kata sandi minimal 6 karakter.'); return; }
-  auth.createUserWithEmailAndPassword(email, pass).catch(e => showAuthErr(e.message));
+  auth.createUserWithEmailAndPassword(email, pass).catch(e => {
+    if(e.code === 'auth/email-already-in-use'){
+      showAuthErr('Email ini sudah terdaftar (kemungkinan lewat Google). Coba "Masuk dengan Google", lalu di dalam app pakai tombol "Atur Kata Sandi" untuk menambahkan login manual ke akun yang sama.');
+    } else {
+      showAuthErr(e.message);
+    }
+  });
 }
 function showAuthErr(msg){ document.getElementById('authErr').textContent = msg; }
 function logout(){ auth.signOut(); }
+
+/* ---- Link email/password ke akun yang sedang login (mis. akun Google) ---- */
+function openSetPasswordModal(){
+  document.getElementById('setPwEmail').textContent = currentUser ? (currentUser.email || '') : '';
+  document.getElementById('newPassword').value = '';
+  document.getElementById('newPasswordConfirm').value = '';
+  document.getElementById('setPwErr').textContent = '';
+  document.getElementById('setPasswordModalBg').style.display = 'flex';
+}
+function closeSetPasswordModal(){ document.getElementById('setPasswordModalBg').style.display = 'none'; }
+function confirmSetPassword(){
+  const pw = document.getElementById('newPassword').value;
+  const pw2 = document.getElementById('newPasswordConfirm').value;
+  const errEl = document.getElementById('setPwErr');
+  if(!pw || pw.length < 6){ errEl.textContent = 'Kata sandi minimal 6 karakter.'; return; }
+  if(pw !== pw2){ errEl.textContent = 'Kata sandi tidak sama.'; return; }
+  if(!currentUser || !currentUser.email){ errEl.textContent = 'Akun ini tidak punya email terdaftar.'; return; }
+  const cred = firebase.auth.EmailAuthProvider.credential(currentUser.email, pw);
+  currentUser.linkWithCredential(cred).then(() => {
+    document.getElementById('btnSetPassword').style.display = 'none';
+    closeSetPasswordModal();
+    alert('Berhasil! Sekarang kamu bisa login pakai Google ATAU email + kata sandi ini.');
+  }).catch(e => { errEl.textContent = e.message; });
+}
 
 auth.onAuthStateChanged(user => {
   if(user){
@@ -566,6 +613,8 @@ auth.onAuthStateChanged(user => {
     document.getElementById('authScreen').style.display = 'none';
     document.getElementById('appShell').style.display = 'block';
     document.getElementById('userLabel').textContent = user.email || user.displayName || 'Masuk';
+    const hasPassword = user.providerData.some(p => p.providerId === 'password');
+    document.getElementById('btnSetPassword').style.display = hasPassword ? 'none' : 'inline-flex';
     attachListeners();
   } else {
     currentUser = null;
