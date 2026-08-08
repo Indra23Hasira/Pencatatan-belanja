@@ -34,10 +34,6 @@
     color:var(--ink);
     font-family:'Inter',system-ui,sans-serif;
     -webkit-font-smoothing:antialiased;
-    background-image:
-      linear-gradient(var(--line) 1px, transparent 1px);
-    background-size: 100% 32px;
-    background-position: 0 120px;
   }
   .mono{font-family:'IBM Plex Mono',monospace;}
   .display{font-family:'Fraunces',serif;}
@@ -363,6 +359,31 @@
           <div class="helper">Sebelum tanggal ini, modal 100% dianggap Cash (Scan belum ada). Sisa modal di akhir periode tidak dibawa ke periode berikutnya — itu jadi bonus terpisah, bukan bagian saldo operasional.</div>
           <button class="btn btn-primary" style="margin-top:14px;" onclick="saveModalAwal()">Simpan Modal Awal</button>
         </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2 class="section-title">Ubah Mata Uang Transaksi (Massal)</h2>
+        <div class="helper" style="margin-bottom:10px;">Untuk transaksi yang salah dicatat sebagai IDR padahal aslinya dibayar pakai mata uang lain. Angka "Jumlah" pada transaksi yang cocok akan dianggap sebagai mata uang baru, lalu nilai IDR-nya dihitung ulang otomatis pakai kurs saat ini.</div>
+        <div class="grid g3">
+          <div class="field"><label>Dari Tanggal</label><input type="date" id="bulkFrom"></div>
+          <div class="field"><label>Sampai Tanggal</label><input type="date" id="bulkTo"></div>
+          <div class="field"><label>Metode (opsional)</label>
+            <select id="bulkMetode">
+              <option value="">Semua Metode</option>
+              <option value="cash">💵 Cash</option>
+              <option value="scan">📱 Scan</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" style="max-width:220px;"><label>Ubah Jadi Mata Uang</label>
+          <select id="bulkCurrency">
+            <option value="KHR">KHR (Riel)</option>
+            <option value="USD">USD</option>
+            <option value="IDR">IDR</option>
+          </select>
+        </div>
+        <button class="btn btn-rust" onclick="bulkConvertCurrency()">Terapkan ke Transaksi yang Cocok</button>
+        <div class="helper" id="bulkConvertStatus" style="margin-top:10px;"></div>
       </div>
 
       <div class="card" style="margin-top:16px;">
@@ -1091,6 +1112,50 @@ function addKategori(){
 }
 function deleteKategori(id){
   if(confirm('Hapus kategori ini?')) db.collection('kategori').doc(id).delete();
+}
+
+/* =========================================================
+   UBAH MATA UANG MASSAL
+========================================================= */
+async function bulkConvertCurrency(){
+  const from = document.getElementById('bulkFrom').value;
+  const to = document.getElementById('bulkTo').value;
+  const metode = document.getElementById('bulkMetode').value;
+  const targetCurrency = document.getElementById('bulkCurrency').value;
+  const statusEl = document.getElementById('bulkConvertStatus');
+  if(!from || !to){ alert('Isi rentang tanggal dulu (dari - sampai).'); return; }
+
+  const matches = transaksiData.filter(t => {
+    if(t.tanggal < from || t.tanggal > to) return false;
+    if(metode && t.metode !== metode) return false;
+    return true;
+  });
+  if(matches.length === 0){ alert('Tidak ada transaksi yang cocok dengan filter itu.'); return; }
+  if(!confirm(`${matches.length} transaksi (${fmtDate(from)} – ${fmtDate(to)}) akan diubah jadi mata uang ${targetCurrency}. Nilai "Jumlah" akan dianggap sebagai ${targetCurrency}, lalu nilai IDR dihitung ulang. Lanjutkan?`)) return;
+
+  statusEl.textContent = `Memproses ${matches.length} transaksi…`;
+  try {
+    const chunkSize = 400;
+    let done = 0;
+    for(let i=0; i<matches.length; i += chunkSize){
+      const chunk = matches.slice(i, i + chunkSize);
+      const batch = db.batch();
+      chunk.forEach(t => {
+        const newJumlahIDR = toIDR(t.jumlah, targetCurrency);
+        batch.update(db.collection('transaksi').doc(t.id), {
+          currency: targetCurrency,
+          jumlahIDR: newJumlahIDR
+        });
+      });
+      await batch.commit();
+      done += chunk.length;
+      statusEl.textContent = `Memproses… ${done}/${matches.length}`;
+    }
+    statusEl.textContent = `✓ ${done} transaksi berhasil diubah ke ${targetCurrency}.`;
+  } catch(e){
+    statusEl.textContent = '';
+    alert('Gagal: ' + e.message);
+  }
 }
 
 /* =========================================================
