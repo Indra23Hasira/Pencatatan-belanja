@@ -347,6 +347,13 @@
           <div class="field"><label>KHR → IDR</label><input type="number" id="setKursKhrIdr" step="any" placeholder="cth. 4"></div>
           <div class="field"><label>USD → IDR</label><input type="number" id="setKursUsdIdr" step="any" placeholder="cth. 17900"></div>
           <div class="helper">Nilai ini dipakai untuk mengonversi transaksi USD/KHR ke IDR secara otomatis.</div>
+          <div class="field" style="margin-top:14px;"><label>Mata Uang di Dalam Kurung (tabel Transaksi & Pinjaman)</label>
+            <select id="setSecondaryCurrency">
+              <option value="IDR">Rp IDR</option>
+              <option value="USD">$ USD</option>
+              <option value="KHR">៛ KHR (Riel)</option>
+            </select>
+          </div>
           <button class="btn btn-primary" style="margin-top:14px;" onclick="saveKurs()">Simpan Kurs</button>
         </div>
         <div class="card">
@@ -559,7 +566,7 @@ let currentUser = null;
 let transaksiData = [];   // {id, tanggal, bukti, kategori, deskripsi, jumlah, currency, jumlahIDR, metode}
 let pinjamanData = [];    // {id, nama, tanggalPinjam, jumlah, metode, status, tanggalBayar, metodeBayar, catatan}
 let kategoriData = [];    // {id, nama, color}
-let settings = { kursUsdKhr: 4000, kursKhrIdr: 4, kursUsdIdr: 17900, modalAwalUsd: 1000, splitCashUsd: 400, splitScanUsd: 600, tanggalMulaiScan: "2026-07-21" };
+let settings = { kursUsdKhr: 4000, kursKhrIdr: 4, kursUsdIdr: 17900, modalAwalUsd: 1000, splitCashUsd: 400, splitScanUsd: 600, tanggalMulaiScan: "2026-07-21", secondaryCurrency: "IDR" };
 let unsubs = [];
 let chartKategori = null;
 let dashPeriodOffset = 0; // 0 = current period, -1 previous, +1 next
@@ -672,6 +679,8 @@ function attachListeners(){
     }
     fillSettingsForm();
     renderDashboard();
+    renderTransaksi();
+    renderPinjaman();
   }));
 
   unsubs.push(db.collection('kategori').orderBy('nama').onSnapshot(snap => {
@@ -751,6 +760,22 @@ function setDashCurrency(cur){
     b.classList.toggle('active-cash', b.dataset.cur === cur);
   });
   renderDashboard();
+}
+// Format nilai IDR ke mata uang sekunder (yang ditampilkan di dalam kurung pada tabel Transaksi/Pinjaman)
+function fmtSecondary(amountIDR){
+  amountIDR = Number(amountIDR) || 0;
+  const cur = settings.secondaryCurrency || 'IDR';
+  if(cur === 'USD'){
+    const kurs = Number(settings.kursUsdIdr) || 0;
+    const usd = kurs > 0 ? amountIDR / kurs : 0;
+    return '$ ' + usd.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  if(cur === 'KHR'){
+    const kurs = Number(settings.kursKhrIdr) || 0;
+    const khr = kurs > 0 ? amountIDR / kurs : 0;
+    return '៛ ' + Math.round(khr).toLocaleString('id-ID');
+  }
+  return fmtIDR(amountIDR);
 }
 // Periode berjalan tanggal 21 - 20. Nama periode = bulan tanggal mulai (21).
 function getPeriode(dateStr){
@@ -983,7 +1008,11 @@ function renderTransaksi(){
     const kat = kategoriData.find(k=>k.nama===t.kategori);
     const dotColor = kat ? kat.color : '#999';
     const metodeBadge = t.metode==='cash' ? `<span class="pill pill-green">💵 Cash</span>` : `<span class="pill pill-gold">📱 Scan</span>`;
-    const jumlahDisp = t.currency !== 'IDR' ? `${t.currency} ${Number(t.jumlah).toLocaleString('id-ID')} <span style="color:var(--ink-soft);font-size:11px;">(${fmtIDR(t.jumlahIDR)})</span>` : fmtIDR(t.jumlahIDR);
+    const trxOwnCur = t.currency || 'IDR';
+    const showSecondaryTrx = (settings.secondaryCurrency || 'IDR') !== trxOwnCur;
+    const jumlahDisp = trxOwnCur !== 'IDR'
+      ? `${trxOwnCur} ${Number(t.jumlah).toLocaleString('id-ID')}${showSecondaryTrx ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(t.jumlahIDR)})</span>` : ''}`
+      : `${fmtIDR(t.jumlahIDR)}${showSecondaryTrx ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(t.jumlahIDR)})</span>` : ''}`;
     return `<tr>
       <td class="mono">${fmtDate(t.tanggal)}</td>
       <td>${t.bukti||'—'}</td>
@@ -1133,9 +1162,11 @@ function renderPinjaman(){
       : `<span class="badge-status badge-belum">Belum Lunas</span>`;
     const actionBtn = status==='lunas' ? '' : `<button class="btn btn-primary btn-sm" onclick="openBayarModal('${p.id}')">Bayar</button>`;
     const totalIDR = Number(p.jumlahIDR != null ? p.jumlahIDR : p.jumlah) || 0;
-    const pokokDisp = (p.currency && p.currency !== 'IDR')
-      ? `${p.currency} ${Number(p.jumlah).toLocaleString('id-ID')} <span style="color:var(--ink-soft);font-size:11px;">(${fmtIDR(totalIDR)})</span>`
-      : fmtIDR(totalIDR);
+    const pinjamOwnCur = p.currency || 'IDR';
+    const showSecondaryPinjam = (settings.secondaryCurrency || 'IDR') !== pinjamOwnCur;
+    const pokokDisp = pinjamOwnCur !== 'IDR'
+      ? `${pinjamOwnCur} ${Number(p.jumlah).toLocaleString('id-ID')}${showSecondaryPinjam ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(totalIDR)})</span>` : ''}`
+      : `${fmtIDR(totalIDR)}${showSecondaryPinjam ? ` <span style="color:var(--ink-soft);font-size:11px;">(${fmtSecondary(totalIDR)})</span>` : ''}`;
     const jumlahCell = status==='belum' ? pokokDisp
       : `${pokokDisp}<div style="color:var(--ink-soft);font-size:11px;">terbayar ${fmtIDR(terbayar)} · sisa ${fmtIDR(sisa)}</div>`;
     const riwayat = (p.pembayaran||[]).length
@@ -1160,6 +1191,7 @@ function fillSettingsForm(){
   document.getElementById('setKursUsdKhr').value = settings.kursUsdKhr;
   document.getElementById('setKursKhrIdr').value = settings.kursKhrIdr;
   document.getElementById('setKursUsdIdr').value = settings.kursUsdIdr;
+  document.getElementById('setSecondaryCurrency').value = settings.secondaryCurrency || 'IDR';
   document.getElementById('setModalAwalUsd').value = settings.modalAwalUsd;
   document.getElementById('setSplitCashUsd').value = settings.splitCashUsd;
   document.getElementById('setSplitScanUsd').value = settings.splitScanUsd;
@@ -1170,6 +1202,7 @@ function saveKurs(){
     kursUsdKhr: Number(document.getElementById('setKursUsdKhr').value)||0,
     kursKhrIdr: Number(document.getElementById('setKursKhrIdr').value)||0,
     kursUsdIdr: Number(document.getElementById('setKursUsdIdr').value)||0,
+    secondaryCurrency: document.getElementById('setSecondaryCurrency').value,
   }, {merge:true}).then(()=>alert('Kurs disimpan.'));
 }
 function saveModalAwal(){
