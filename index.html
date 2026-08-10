@@ -326,6 +326,7 @@
             <option value="scan">📱 Scan</option>
           </select>
           <button class="btn btn-outline" onclick="exportTransaksiCSV()">⭳ Export Excel</button>
+          <button class="btn btn-rust" onclick="openBulkDeleteModal()">🗑️ Hapus Data Massal</button>
           <button class="btn btn-primary" onclick="openTrxModal()">+ Catat Pengeluaran</button>
         </div>
       </div>
@@ -567,6 +568,46 @@
       <button class="btn btn-outline" onclick="closeTransferModal()">Batal</button>
       <button class="btn btn-primary" onclick="saveTransfer()">Simpan Transfer</button>
     </div>
+  </div>
+</div>
+
+<!-- ================= MODAL: HAPUS DATA MASSAL ================= -->
+<div class="modal-bg" id="bulkDeleteModalBg">
+  <div class="modal" style="position:relative;">
+    <button class="close-x" onclick="closeBulkDeleteModal()">✕</button>
+    <h3>🗑️ Hapus Data Massal</h3>
+    <div class="helper" style="margin-bottom:14px;">Untuk membersihkan transaksi lama yang sudah kamu <strong>export/backup</strong>, supaya hemat kuota Firestore. <strong style="color:var(--rust);">Aksi ini permanen dan tidak bisa dibatalkan</strong> — pastikan sudah export Excel dulu sebelum menghapus.</div>
+
+    <div class="field"><label>Pilihan Cepat</label>
+      <select id="bulkDelQuickYear" onchange="applyBulkDelQuickYear()">
+        <option value="">— Pilih tahun (opsional) —</option>
+      </select>
+    </div>
+    <div class="grid g2">
+      <div class="field"><label>Dari Tanggal</label><input type="date" id="bulkDelFrom"></div>
+      <div class="field"><label>Sampai Tanggal</label><input type="date" id="bulkDelTo"></div>
+    </div>
+    <div class="grid g2">
+      <div class="field"><label>Kategori (opsional)</label>
+        <select id="bulkDelKategori"><option value="">Semua Kategori</option></select>
+      </div>
+      <div class="field"><label>Metode (opsional)</label>
+        <select id="bulkDelMetode">
+          <option value="">Semua Metode</option>
+          <option value="cash">💵 Cash</option>
+          <option value="scan">📱 Scan</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn btn-outline" onclick="previewBulkDelete()">Cek Jumlah yang Cocok</button>
+    <div class="helper" id="bulkDelPreview" style="margin:10px 0;"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeBulkDeleteModal()">Batal</button>
+      <button class="btn btn-rust" id="bulkDelConfirmBtn" onclick="confirmBulkDelete()" disabled>Hapus Transaksi yang Cocok</button>
+    </div>
+    <div class="helper" id="bulkDelStatus" style="margin-top:10px;"></div>
   </div>
 </div>
 
@@ -1379,6 +1420,91 @@ function exportTransaksiCSV(){
   a.download = 'transaksi_' + new Date().toISOString().slice(0,10) + '.csv';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* =========================================================
+   HAPUS DATA MASSAL (Transaksi)
+========================================================= */
+let bulkDelMatches = [];
+function openBulkDeleteModal(){
+  // Isi pilihan cepat tahun dari tahun-tahun yang benar-benar ada datanya
+  const years = [...new Set(transaksiData.map(t => t.tanggal ? t.tanggal.slice(0,4) : null).filter(Boolean))].sort().reverse();
+  const yearSel = document.getElementById('bulkDelQuickYear');
+  yearSel.innerHTML = '<option value="">— Pilih tahun (opsional) —</option>' + years.map(y => `<option value="${y}">Tahun ${y}</option>`).join('');
+
+  const katSel = document.getElementById('bulkDelKategori');
+  katSel.innerHTML = '<option value="">Semua Kategori</option>' + kategoriData.map(k => `<option value="${k.nama}">${k.nama}</option>`).join('');
+
+  document.getElementById('bulkDelFrom').value = '';
+  document.getElementById('bulkDelTo').value = '';
+  document.getElementById('bulkDelMetode').value = '';
+  document.getElementById('bulkDelPreview').textContent = '';
+  document.getElementById('bulkDelStatus').textContent = '';
+  document.getElementById('bulkDelConfirmBtn').disabled = true;
+  bulkDelMatches = [];
+  document.getElementById('bulkDeleteModalBg').style.display = 'flex';
+}
+function closeBulkDeleteModal(){ document.getElementById('bulkDeleteModalBg').style.display = 'none'; }
+function applyBulkDelQuickYear(){
+  const y = document.getElementById('bulkDelQuickYear').value;
+  if(!y) return;
+  document.getElementById('bulkDelFrom').value = y + '-01-01';
+  document.getElementById('bulkDelTo').value = y + '-12-31';
+  document.getElementById('bulkDelPreview').textContent = '';
+  document.getElementById('bulkDelConfirmBtn').disabled = true;
+}
+function previewBulkDelete(){
+  const from = document.getElementById('bulkDelFrom').value;
+  const to = document.getElementById('bulkDelTo').value;
+  const kategori = document.getElementById('bulkDelKategori').value;
+  const metode = document.getElementById('bulkDelMetode').value;
+  const preview = document.getElementById('bulkDelPreview');
+  if(!from || !to){ preview.textContent = 'Isi rentang tanggal dulu (dari - sampai).'; document.getElementById('bulkDelConfirmBtn').disabled = true; return; }
+  bulkDelMatches = transaksiData.filter(t => {
+    if(t.tanggal < from || t.tanggal > to) return false;
+    if(kategori && t.kategori !== kategori) return false;
+    if(metode && t.metode !== metode) return false;
+    return true;
+  });
+  if(bulkDelMatches.length === 0){
+    preview.innerHTML = 'Tidak ada transaksi yang cocok dengan filter ini.';
+    document.getElementById('bulkDelConfirmBtn').disabled = true;
+    return;
+  }
+  const total = bulkDelMatches.reduce((s,t) => s + (t.jumlahIDR||0), 0);
+  preview.innerHTML = `<strong style="color:var(--rust);">${bulkDelMatches.length} transaksi</strong> (${fmtDate(from)} – ${fmtDate(to)}) senilai total ${fmtIDR(total)} akan dihapus permanen. Sudah yakin sudah export data ini?`;
+  document.getElementById('bulkDelConfirmBtn').disabled = false;
+}
+async function confirmBulkDelete(){
+  if(bulkDelMatches.length === 0) return;
+  const ok1 = confirm(`Yakin hapus ${bulkDelMatches.length} transaksi ini? Aksi ini TIDAK BISA dibatalkan.`);
+  if(!ok1) return;
+  const typed = prompt(`Ketik angka ${bulkDelMatches.length} untuk konfirmasi final penghapusan:`);
+  if(typed === null || typed.trim() !== String(bulkDelMatches.length)){
+    alert('Dibatalkan — angka konfirmasi tidak cocok.');
+    return;
+  }
+  const statusEl = document.getElementById('bulkDelStatus');
+  statusEl.textContent = `Menghapus ${bulkDelMatches.length} transaksi…`;
+  document.getElementById('bulkDelConfirmBtn').disabled = true;
+  try {
+    const chunkSize = 400;
+    let done = 0;
+    for(let i=0; i<bulkDelMatches.length; i += chunkSize){
+      const chunk = bulkDelMatches.slice(i, i + chunkSize);
+      const batch = db.batch();
+      chunk.forEach(t => batch.delete(db.collection('transaksi').doc(t.id)));
+      await batch.commit();
+      done += chunk.length;
+      statusEl.textContent = `Menghapus… ${done}/${bulkDelMatches.length}`;
+    }
+    statusEl.textContent = `✓ ${done} transaksi berhasil dihapus.`;
+    bulkDelMatches = [];
+    document.getElementById('bulkDelPreview').textContent = '';
+  } catch(e){
+    statusEl.textContent = '';
+    alert('Gagal hapus: ' + e.message);
+  }
 }
 
 /* =========================================================
