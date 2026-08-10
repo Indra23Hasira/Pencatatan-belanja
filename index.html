@@ -458,7 +458,7 @@
 <div class="modal-bg" id="pinjamModalBg">
   <div class="modal" style="position:relative;">
     <button class="close-x" onclick="closePinjamModal()">✕</button>
-    <h3>Catat Pinjaman / Cashbon</h3>
+    <h3 id="pinjamModalTitle">Catat Pinjaman / Cashbon</h3>
     <div class="field"><label>Nama Peminjam</label><input type="text" id="pinjamNama" placeholder="Nama anggota tim"></div>
     <div class="field"><label>Tanggal Pinjam</label><input type="date" id="pinjamTanggal"></div>
     <div class="grid g2">
@@ -588,6 +588,7 @@ function updateBayarKonversi(){
 }
 let editingTrxId = null;
 let payingLoanId = null;
+let editingPinjamId = null;
 
 const KAT_PALETTE = ['#2F5D50','#B9852F','#AE4A26','#4C6B8A','#7A5C8E','#6E8B3D','#B0555E','#3C7A89'];
 
@@ -1324,14 +1325,17 @@ function setPinjamMetode(m){
   document.getElementById('pinjamMetodeCash').classList.toggle('active-cash', m==='cash');
   document.getElementById('pinjamMetodeScan').classList.toggle('active-scan', m==='scan');
 }
-function openPinjamModal(){
-  document.getElementById('pinjamNama').value = '';
-  document.getElementById('pinjamTanggal').value = new Date().toISOString().slice(0,10);
-  document.getElementById('pinjamCurrency').value = 'IDR';
-  document.getElementById('pinjamJumlah').value = '';
+function openPinjamModal(p){
+  editingPinjamId = p ? p.id : null;
+  document.getElementById('pinjamModalTitle').textContent = p ? 'Ubah Pinjaman / Cashbon' : 'Catat Pinjaman / Cashbon';
+  document.getElementById('pinjamNama').value = p ? p.nama : '';
+  document.getElementById('pinjamTanggal').value = p ? p.tanggalPinjam : new Date().toISOString().slice(0,10);
+  document.getElementById('pinjamCurrency').value = p ? (p.currency || 'IDR') : 'IDR';
+  document.getElementById('pinjamJumlah').value = p ? p.jumlah : '';
   document.getElementById('pinjamKonversiHelper').textContent = '';
-  document.getElementById('pinjamCatatan').value = '';
-  setPinjamMetode('cash');
+  document.getElementById('pinjamCatatan').value = p ? (p.catatan || '') : '';
+  setPinjamMetode(p ? p.metode : 'cash');
+  updatePinjamKonversi();
   document.getElementById('pinjamModalBg').style.display = 'flex';
 }
 function closePinjamModal(){ document.getElementById('pinjamModalBg').style.display = 'none'; }
@@ -1343,9 +1347,19 @@ function savePinjam(){
   const catatan = document.getElementById('pinjamCatatan').value.trim();
   if(!nama || !tanggalPinjam || !jumlah){ alert('Lengkapi nama, tanggal, dan jumlah.'); return; }
   const jumlahIDR = toIDR(jumlah, currency);
-  db.collection('pinjaman').add({
-    nama, tanggalPinjam, currency, jumlah, jumlahIDR, metode: pinjamMetode, catatan, status: 'belum', pembayaran: []
-  }).then(closePinjamModal).catch(e => alert('Gagal simpan: '+e.message));
+  if(editingPinjamId){
+    const existing = pinjamanData.find(x => x.id === editingPinjamId);
+    if(existing && (existing.pembayaran||[]).length > 0){
+      if(!confirm('Pinjaman ini sudah punya riwayat pembayaran. Mengubah jumlah pokok bisa bikin status Lunas/Sisa tidak akurat lagi. Lanjutkan?')) return;
+    }
+    db.collection('pinjaman').doc(editingPinjamId).update({
+      nama, tanggalPinjam, currency, jumlah, jumlahIDR, metode: pinjamMetode, catatan
+    }).then(closePinjamModal).catch(e => alert('Gagal simpan: '+e.message));
+  } else {
+    db.collection('pinjaman').add({
+      nama, tanggalPinjam, currency, jumlah, jumlahIDR, metode: pinjamMetode, catatan, status: 'belum', pembayaran: []
+    }).then(closePinjamModal).catch(e => alert('Gagal simpan: '+e.message));
+  }
 }
 function setBayarMetode(m){
   bayarMetode = m;
@@ -1440,7 +1454,7 @@ function renderPinjaman(){
       <td class="mono">${jumlahCell}</td>
       <td>${statusBadge}</td>
       <td class="mono">${riwayat}</td>
-      <td style="white-space:nowrap;">${actionBtn} <button class="btn btn-outline btn-sm" onclick="deletePinjam('${p.id}')">Hapus</button></td>
+      <td style="white-space:nowrap;">${actionBtn} <button class="btn btn-outline btn-sm" onclick='openPinjamModal(${JSON.stringify(p).replace(/'/g,"&#39;")})'>Ubah</button> <button class="btn btn-outline btn-sm" onclick="deletePinjam('${p.id}')">Hapus</button></td>
     </tr>`;
   }).join('');
 }
