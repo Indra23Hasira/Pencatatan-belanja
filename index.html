@@ -248,10 +248,13 @@
       </div>
       <div class="toolbar" style="margin-top:-8px;">
         <div style="font-size:12px;color:var(--ink-soft);font-weight:600;">Tampilkan saldo dalam</div>
-        <div class="toggle-group" id="currencyToggle">
-          <button type="button" class="toggle-opt active-cash" data-cur="IDR" onclick="setDashCurrency('IDR')">Rp IDR</button>
-          <button type="button" class="toggle-opt" data-cur="USD" onclick="setDashCurrency('USD')">$ USD</button>
-          <button type="button" class="toggle-opt" data-cur="KHR" onclick="setDashCurrency('KHR')">៛ Riel</button>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <div class="toggle-group" id="currencyToggle">
+            <button type="button" class="toggle-opt active-cash" data-cur="IDR" onclick="setDashCurrency('IDR')">Rp IDR</button>
+            <button type="button" class="toggle-opt" data-cur="USD" onclick="setDashCurrency('USD')">$ USD</button>
+            <button type="button" class="toggle-opt" data-cur="KHR" onclick="setDashCurrency('KHR')">៛ Riel</button>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="openTransferModal()">🔁 Transfer Cash ↔ Scan</button>
         </div>
       </div>
 
@@ -294,6 +297,16 @@
               <tbody id="tblSaldoBulanan"><tr><td colspan="4"><div class="loading"><div class="spinner"></div>Memuat…</div></td></tr></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <h2 class="section-title">Riwayat Transfer Cash ↔ Scan <span class="n" id="transferPeriodTag"></span></h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tanggal</th><th>Arah</th><th>Jumlah</th><th>Catatan</th><th></th></tr></thead>
+            <tbody id="tblTransfer"><tr><td colspan="5"><div class="loading"><div class="spinner"></div>Memuat…</div></td></tr></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -524,6 +537,39 @@
   </div>
 </div>
 
+<!-- ================= MODAL: TRANSFER CASH <-> SCAN ================= -->
+<div class="modal-bg" id="transferModalBg">
+  <div class="modal" style="position:relative;">
+    <button class="close-x" onclick="closeTransferModal()">✕</button>
+    <h3>Transfer Cash ↔ Scan</h3>
+    <div class="helper" style="margin-bottom:14px;">Untuk mencatat perpindahan uang antar kas — misalnya tarik tunai dari Scan ke Cash, atau setor Cash ke Scan. Ini TIDAK dihitung sebagai pengeluaran, cuma mindahkan saldo.</div>
+    <div class="field">
+      <label>Arah Transfer</label>
+      <div class="toggle-group" style="width:100%;">
+        <button type="button" class="toggle-opt active-cash" id="transferArahScanToCash" style="flex:1;" onclick="setTransferArah('scanToCash')">📱 Scan → 💵 Cash</button>
+        <button type="button" class="toggle-opt" id="transferArahCashToScan" style="flex:1;" onclick="setTransferArah('cashToScan')">💵 Cash → 📱 Scan</button>
+      </div>
+    </div>
+    <div class="field"><label>Tanggal</label><input type="date" id="transferTanggal"></div>
+    <div class="grid g2">
+      <div class="field"><label>Mata Uang</label>
+        <select id="transferCurrency" onchange="updateTransferKonversi()">
+          <option value="IDR">IDR</option>
+          <option value="USD">USD</option>
+          <option value="KHR">KHR (Riel)</option>
+        </select>
+      </div>
+      <div class="field"><label>Jumlah</label><input type="number" id="transferJumlah" step="any" oninput="updateTransferKonversi()"></div>
+    </div>
+    <div class="helper" id="transferKonversiHelper" style="margin-bottom:12px;"></div>
+    <div class="field"><label>Catatan (opsional)</label><input type="text" id="transferCatatan" placeholder="cth. tarik tunai karena cash habis"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeTransferModal()">Batal</button>
+      <button class="btn btn-primary" onclick="saveTransfer()">Simpan Transfer</button>
+    </div>
+  </div>
+</div>
+
 <!-- ================= MODAL: ATUR KATA SANDI ================= -->
 <div class="modal-bg" id="setPasswordModalBg">
   <div class="modal" style="position:relative;">
@@ -589,6 +635,8 @@ function updateBayarKonversi(){
 let editingTrxId = null;
 let payingLoanId = null;
 let editingPinjamId = null;
+let transferData = [];
+let transferArah = 'scanToCash';
 
 const KAT_PALETTE = ['#2F5D50','#B9852F','#AE4A26','#4C6B8A','#7A5C8E','#6E8B3D','#B0555E','#3C7A89'];
 
@@ -671,6 +719,7 @@ function attachListeners(){
   document.getElementById('trxTanggal').value = today;
   document.getElementById('pinjamTanggal').value = today;
   document.getElementById('bayarTanggal').value = today;
+  document.getElementById('transferTanggal').value = today;
 
   unsubs.push(db.collection('settings').doc('main').onSnapshot(doc => {
     if(doc.exists){
@@ -718,6 +767,11 @@ function attachListeners(){
   unsubs.push(db.collection('pinjaman').orderBy('tanggalPinjam','desc').onSnapshot(snap => {
     pinjamanData = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderPinjaman();
+    renderDashboard();
+  }));
+
+  unsubs.push(db.collection('transfer').orderBy('tanggal','desc').onSnapshot(snap => {
+    transferData = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderDashboard();
   }));
 }
@@ -988,6 +1042,15 @@ function renderDashboard(){
     }
   });
 
+  // Transfer manual antar Cash <-> Scan pada periode ini (tidak dihitung sebagai pengeluaran)
+  transferData.forEach(x => {
+    if(inRange(x.tanggal, period.start, period.end)){
+      const value = convertAmount(x.jumlah, x.currency || 'IDR', dashDisplayCurrency);
+      if(x.arah === 'scanToCash'){ scan -= value; cash += value; }
+      else { cash -= value; scan += value; }
+    }
+  });
+
   document.getElementById('statSaldoCash').textContent = fmtCurrency(cash);
   document.getElementById('statSaldoScan').textContent = fmtCurrency(scan);
 
@@ -1096,6 +1159,7 @@ function renderDashboard(){
   }
 
   renderSaldoBulanan();
+  renderTransferHistory(period);
 }
 
 function renderSaldoBulanan(){
@@ -1420,6 +1484,64 @@ function confirmBayar(){
 }
 function deletePinjam(id){
   if(confirm('Hapus catatan pinjaman ini?')) db.collection('pinjaman').doc(id).delete();
+}
+/* =========================================================
+   TRANSFER CASH <-> SCAN
+========================================================= */
+function setTransferArah(arah){
+  transferArah = arah;
+  document.getElementById('transferArahScanToCash').classList.toggle('active-cash', arah==='scanToCash');
+  document.getElementById('transferArahCashToScan').classList.toggle('active-scan', arah==='cashToScan');
+}
+function updateTransferKonversi(){
+  const cur = document.getElementById('transferCurrency').value;
+  const jml = Number(document.getElementById('transferJumlah').value)||0;
+  const helper = document.getElementById('transferKonversiHelper');
+  helper.textContent = cur === 'IDR' ? '' : `≈ ${fmtIDR(toIDR(jml, cur))} (kurs dari Pengaturan)`;
+}
+function openTransferModal(){
+  document.getElementById('transferTanggal').value = new Date().toISOString().slice(0,10);
+  document.getElementById('transferCurrency').value = 'IDR';
+  document.getElementById('transferJumlah').value = '';
+  document.getElementById('transferKonversiHelper').textContent = '';
+  document.getElementById('transferCatatan').value = '';
+  setTransferArah('scanToCash');
+  document.getElementById('transferModalBg').style.display = 'flex';
+}
+function closeTransferModal(){ document.getElementById('transferModalBg').style.display = 'none'; }
+function saveTransfer(){
+  const tanggal = document.getElementById('transferTanggal').value;
+  const currency = document.getElementById('transferCurrency').value;
+  const jumlah = Number(document.getElementById('transferJumlah').value);
+  const catatan = document.getElementById('transferCatatan').value.trim();
+  if(!tanggal || !jumlah){ alert('Lengkapi tanggal dan jumlah.'); return; }
+  const jumlahIDR = toIDR(jumlah, currency);
+  db.collection('transfer').add({
+    tanggal, currency, jumlah, jumlahIDR, arah: transferArah, catatan
+  }).then(closeTransferModal).catch(e => alert('Gagal simpan: '+e.message));
+}
+function deleteTransfer(id){
+  if(confirm('Hapus catatan transfer ini?')) db.collection('transfer').doc(id).delete();
+}
+function renderTransferHistory(period){
+  document.getElementById('transferPeriodTag').textContent = '· ' + period.label;
+  const rows = transferData.filter(x => inRange(x.tanggal, period.start, period.end));
+  const tbody = document.getElementById('tblTransfer');
+  if(rows.length === 0){
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state" style="padding:20px;"><div class="glyph">🔁</div>Belum ada transfer periode ini</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(x => {
+    const arahDisp = x.arah === 'scanToCash' ? '📱 Scan → 💵 Cash' : '💵 Cash → 📱 Scan';
+    const jumlahDisp = fmtCurrency(convertAmount(x.jumlah, x.currency || 'IDR', dashDisplayCurrency));
+    return `<tr>
+      <td class="mono">${fmtDate(x.tanggal)}</td>
+      <td>${arahDisp}</td>
+      <td class="mono">${jumlahDisp}</td>
+      <td>${x.catatan||'—'}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="deleteTransfer('${x.id}')">Hapus</button></td>
+    </tr>`;
+  }).join('');
 }
 function renderPinjaman(){
   const tbody = document.getElementById('tblPinjaman');
