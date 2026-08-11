@@ -125,6 +125,8 @@
   .card-tight{padding:14px 16px;}
   .stat-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);font-weight:600;margin-bottom:6px;}
   .stat-value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;}
+  .stat-value.negative{color:var(--rust);}
+  .stat-warning{display:inline-block;margin-top:4px;font-size:11px;font-weight:700;color:var(--rust);background:var(--rust-soft);padding:2px 8px;border-radius:20px;}
   .stat-sub{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
   .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;}
   .pill-green{background:var(--ledger-green-soft);color:var(--ledger-green);}
@@ -262,17 +264,18 @@
         <div class="card">
           <div class="stat-label">Saldo Cash</div>
           <div class="stat-value" id="statSaldoCash">Rp 0</div>
-          <div class="stat-sub">Sisa modal cash periode ini</div>
+          <div class="stat-sub" id="statSaldoCashSub">Sisa modal cash periode ini</div>
         </div>
         <div class="card">
           <div class="stat-label">Saldo Scan</div>
           <div class="stat-value" id="statSaldoScan">Rp 0</div>
-          <div class="stat-sub">Sisa modal scan periode ini</div>
+          <div class="stat-sub" id="statSaldoScanSub">Sisa modal scan periode ini</div>
         </div>
         <div class="card">
           <div class="stat-label">Pengeluaran Periode Ini</div>
           <div class="stat-value" id="statPengeluaran">Rp 0</div>
           <div class="stat-sub" id="statPengeluaranSub">—</div>
+          <div class="stat-sub" id="statPengeluaranBreakdown" style="margin-top:4px;font-family:'IBM Plex Mono',monospace;"></div>
         </div>
         <div class="card">
           <div class="stat-label">Piutang Belum Dibayar</div>
@@ -1095,6 +1098,17 @@ function renderDashboard(){
   document.getElementById('statSaldoCash').textContent = fmtCurrency(cash);
   document.getElementById('statSaldoScan').textContent = fmtCurrency(scan);
 
+  const cashEl = document.getElementById('statSaldoCash');
+  const scanEl = document.getElementById('statSaldoScan');
+  cashEl.classList.toggle('negative', cash < 0);
+  scanEl.classList.toggle('negative', scan < 0);
+  document.getElementById('statSaldoCashSub').innerHTML = cash < 0
+    ? 'Sisa modal cash periode ini <span class="stat-warning">⚠ Minus — cek bon manual</span>'
+    : 'Sisa modal cash periode ini';
+  document.getElementById('statSaldoScanSub').innerHTML = scan < 0
+    ? 'Sisa modal scan periode ini <span class="stat-warning">⚠ Minus — cek bon manual</span>'
+    : 'Sisa modal scan periode ini';
+
   // =========================================================
   // PENGELUARAN PERIODE
   // =========================================================
@@ -1106,6 +1120,12 @@ function renderDashboard(){
     (sum, t) => sum + dashboardValue(t),
     0
   );
+
+  // Pecah pengeluaran transaksi per metode, untuk verifikasi manual terhadap bon
+  const cashBelanja = trxThisPeriod.filter(t => t.metode === 'cash').reduce((s,t) => s + dashboardValue(t), 0);
+  const scanBelanja = trxThisPeriod.filter(t => t.metode === 'scan').reduce((s,t) => s + dashboardValue(t), 0);
+  document.getElementById('statPengeluaranBreakdown').innerHTML =
+    `💵 Cash: ${fmtCurrency(cashBelanja)} &nbsp;·&nbsp; 📱 Scan: ${fmtCurrency(scanBelanja)}`;
 
   // Pinjaman bersih yang berasal dari periode ini.
   const totalPinjamanBersih = pinjamanData.reduce((sum, p) => {
