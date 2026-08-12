@@ -1076,13 +1076,20 @@ function renderDashboard(){
   });
 
   // Pinjaman dibebankan ke periode TANGGAL PINJAM.
-  // Semua pembayaran pinjaman tetap diperhitungkan ke periode asalnya.
+  // Pokok pinjaman mengurangi kantong sesuai metode PINJAMANNYA,
+  // tapi tiap pembayaran mengembalikan ke kantong sesuai metode PEMBAYARANNYA
+  // (bisa beda dari metode pinjaman awal — mis. pinjam Cash, bayar Scan).
   pinjamanData.forEach(p => {
     if(inRange(p.tanggalPinjam, period.start, period.end)){
-      const value = loanPeriodNetValue(p);
+      const principalValue = dashboardValue(p);
+      if(p.metode === 'cash') cash -= principalValue;
+      else scan -= principalValue;
 
-      if(p.metode === 'cash') cash -= value;
-      else scan -= value;
+      (p.pembayaran || []).forEach(pay => {
+        const payValue = dashboardValue(pay);
+        if(pay.metode === 'cash') cash += payValue;
+        else scan += payValue;
+      });
     }
   });
 
