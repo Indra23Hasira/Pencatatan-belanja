@@ -224,7 +224,7 @@
       </div>
     </div>
     <div class="topbar-right">
-      <button class="icon-btn" id="btnSetPassword" onclick="openSetPasswordModal()" style="display:none;">🔑 Atur Kata Sandi</button>
+      <button class="icon-btn" id="btnSetPassword" onclick="openSetPasswordModal()">🔑 Atur Kata Sandi</button>
       <button class="icon-btn" onclick="logout()">Keluar</button>
     </div>
   </div>
@@ -618,7 +618,7 @@
 <div class="modal-bg" id="setPasswordModalBg">
   <div class="modal" style="position:relative;">
     <button class="close-x" onclick="closeSetPasswordModal()">✕</button>
-    <h3>Atur Kata Sandi</h3>
+    <h3 id="setPasswordModalTitle">Atur Kata Sandi</h3>
     <div class="helper" style="margin-bottom:14px;">Ini akan menambahkan login manual (email + kata sandi) ke akun kamu yang sekarang <strong id="setPwEmail"></strong> — jadi kamu bisa masuk lewat Google ATAU lewat email/kata sandi, dua-duanya menuju akun & data yang sama.</div>
     <div class="field"><label>Kata Sandi Baru</label><input type="password" id="newPassword" placeholder="Minimal 6 karakter"></div>
     <div class="field"><label>Ulangi Kata Sandi</label><input type="password" id="newPasswordConfirm"></div>
@@ -713,8 +713,10 @@ function registerEmail(){
 function showAuthErr(msg){ document.getElementById('authErr').textContent = msg; }
 function logout(){ auth.signOut(); }
 
-/* ---- Link email/password ke akun yang sedang login (mis. akun Google) ---- */
+/* ---- Set (link) atau ubah (update) password email untuk akun yang sedang login ---- */
 function openSetPasswordModal(){
+  const hasPassword = currentUser && currentUser.providerData.some(p => p.providerId === 'password');
+  document.getElementById('setPasswordModalTitle').textContent = hasPassword ? 'Ubah Kata Sandi' : 'Atur Kata Sandi';
   document.getElementById('setPwEmail').textContent = currentUser ? (currentUser.email || '') : '';
   document.getElementById('newPassword').value = '';
   document.getElementById('newPasswordConfirm').value = '';
@@ -729,12 +731,27 @@ function confirmSetPassword(){
   if(!pw || pw.length < 6){ errEl.textContent = 'Kata sandi minimal 6 karakter.'; return; }
   if(pw !== pw2){ errEl.textContent = 'Kata sandi tidak sama.'; return; }
   if(!currentUser || !currentUser.email){ errEl.textContent = 'Akun ini tidak punya email terdaftar.'; return; }
-  const cred = firebase.auth.EmailAuthProvider.credential(currentUser.email, pw);
-  currentUser.linkWithCredential(cred).then(() => {
-    document.getElementById('btnSetPassword').style.display = 'none';
+  const hasPassword = currentUser.providerData.some(p => p.providerId === 'password');
+
+  function done(){
+    document.getElementById('btnSetPassword').textContent = '🔑 Ubah Kata Sandi';
     closeSetPasswordModal();
-    alert('Berhasil! Sekarang kamu bisa login pakai Google ATAU email + kata sandi ini.');
-  }).catch(e => { errEl.textContent = e.message; });
+    alert('Berhasil! Sekarang kamu bisa login pakai Google ATAU email + kata sandi baru ini.');
+  }
+
+  if(hasPassword){
+    // Sudah pernah ter-link sebelumnya (mis. dari console) — update saja passwordnya.
+    currentUser.updatePassword(pw).then(done).catch(e => {
+      if(e.code === 'auth/requires-recent-login'){
+        errEl.textContent = 'Sesi login kamu sudah lama — silakan Keluar, lalu login ulang pakai Google, dan coba lagi.';
+      } else {
+        errEl.textContent = e.message;
+      }
+    });
+  } else {
+    const cred = firebase.auth.EmailAuthProvider.credential(currentUser.email, pw);
+    currentUser.linkWithCredential(cred).then(done).catch(e => { errEl.textContent = e.message; });
+  }
 }
 
 auth.onAuthStateChanged(user => {
@@ -744,7 +761,7 @@ auth.onAuthStateChanged(user => {
     document.getElementById('appShell').style.display = 'block';
     document.getElementById('userLabel').textContent = user.email || user.displayName || 'Masuk';
     const hasPassword = user.providerData.some(p => p.providerId === 'password');
-    document.getElementById('btnSetPassword').style.display = hasPassword ? 'none' : 'inline-flex';
+    document.getElementById('btnSetPassword').textContent = hasPassword ? '🔑 Ubah Kata Sandi' : '🔑 Atur Kata Sandi';
     attachListeners();
   } else {
     currentUser = null;
