@@ -387,6 +387,20 @@
       </div>
 
       <div class="card" style="margin-top:16px;">
+        <h2 class="section-title">Override Modal untuk Periode Tertentu</h2>
+        <div class="helper" style="margin-bottom:10px;">Kalau modal periode tertentu beda dari biasanya (mis. Agustus dapat modal tambahan), atur di sini — <strong>tidak</strong> akan mengubah perhitungan periode lain. Kosongkan / hapus override untuk kembali memakai aturan umum di kartu "Modal Awal per Periode".</div>
+        <div class="grid g3">
+          <div class="field"><label>Periode</label>
+            <select id="overridePeriodSelect"></select>
+          </div>
+          <div class="field"><label>Porsi Cash (USD)</label><input type="number" id="overrideCashUsd" step="any" placeholder="cth. 400"></div>
+          <div class="field"><label>Porsi Scan (USD)</label><input type="number" id="overrideScanUsd" step="any" placeholder="cth. 600"></div>
+        </div>
+        <button class="btn btn-primary" onclick="saveModalOverride()">Simpan Override Periode Ini</button>
+        <div id="modalOverrideList" style="margin-top:16px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
         <h2 class="section-title">Ubah Mata Uang Transaksi (Massal)</h2>
         <div class="helper" style="margin-bottom:10px;">Untuk transaksi yang salah dicatat sebagai IDR padahal aslinya dibayar pakai mata uang lain. Angka "Jumlah" pada transaksi yang cocok akan dianggap sebagai mata uang baru, lalu nilai IDR-nya dihitung ulang otomatis pakai kurs saat ini.</div>
         <div class="grid g3">
@@ -656,6 +670,7 @@ let currentUser = null;
 let transaksiData = [];   // {id, tanggal, bukti, kategori, deskripsi, jumlah, currency, jumlahIDR, metode}
 let pinjamanData = [];    // {id, nama, tanggalPinjam, jumlah, metode, status, tanggalBayar, metodeBayar, catatan}
 let kategoriData = [];    // {id, nama, color}
+let modalOverrideData = []; // [{id: periodKey e.g. '2026-08', cashUsd, scanUsd}]
 let settings = { kursUsdKhr: 4000, kursKhrIdr: 4, kursUsdIdr: 17900, modalAwalUsd: 1000, splitCashUsd: 400, splitScanUsd: 600, tanggalMulaiScan: "2026-07-21", secondaryCurrency: "IDR" };
 let unsubs = [];
 let chartKategori = null;
@@ -835,6 +850,12 @@ function attachListeners(){
     transferData = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderDashboard();
   }));
+
+  unsubs.push(db.collection('modalOverride').onSnapshot(snap => {
+    modalOverrideData = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderModalOverrideList();
+    renderDashboard();
+  }));
 }
 
 function seedKategori(){
@@ -852,6 +873,10 @@ function switchTab(tab){
     document.getElementById('tab-'+t).style.display = (t===tab) ? 'block' : 'none';
   });
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  if(tab === 'pengaturan'){
+    fillOverridePeriodSelect();
+    renderModalOverrideList();
+  }
 }
 
 /* =========================================================
@@ -922,6 +947,24 @@ function modalDashboardValue(usdAmount){
     'USD',
     dashDisplayCurrency
   );
+}
+
+// Ambil modal awal (USD) untuk sebuah periode tertentu.
+// Kalau ada override khusus periode itu (modalOverrideData), pakai itu.
+// Kalau tidak, fallback ke pengaturan global (Modal Awal per Periode).
+// Ini memastikan mengubah modal 1 periode TIDAK ikut mengubah periode lain.
+function getModalUsdForPeriod(period){
+  const override = modalOverrideData.find(o => o.id === period.key);
+  if(override){
+    return { cashUsd: Number(override.cashUsd)||0, scanUsd: Number(override.scanUsd)||0 };
+  }
+  const scanActive =
+    settings.tanggalMulaiScan &&
+    period.start >= new Date(settings.tanggalMulaiScan + 'T00:00:00');
+  if(scanActive){
+    return { cashUsd: Number(settings.splitCashUsd)||0, scanUsd: Number(settings.splitScanUsd)||0 };
+  }
+  return { cashUsd: Number(settings.modalAwalUsd)||0, scanUsd: 0 };
 }
 
 // =========================================================
@@ -1071,17 +1114,9 @@ function renderDashboard(){
   // Semua transaksi dan pinjaman dibebankan ke PERIODE ASAL.
   // Pembayaran pinjaman tidak dipindahkan ke periode pembayaran.
   // =========================================================
-  const scanActive =
-    settings.tanggalMulaiScan &&
-    period.start >= new Date(settings.tanggalMulaiScan + 'T00:00:00');
-
-  let cash = modalDashboardValue(
-    scanActive ? settings.splitCashUsd : settings.modalAwalUsd
-  );
-
-  let scan = scanActive
-    ? modalDashboardValue(settings.splitScanUsd)
-    : 0;
+  const modalUsd = getModalUsdForPeriod(period);
+  let cash = modalDashboardValue(modalUsd.cashUsd);
+  let scan = modalDashboardValue(modalUsd.scanUsd);
 
   // Pengeluaran transaksi pada periode ini.
   transaksiData.forEach(t => {
@@ -1298,22 +1333,12 @@ function renderSaldoBulanan(){
   tbody.innerHTML = keys.map(k => {
     const p = periodMap[k];
 
-    // Setiap periode mendapat modal tetap sesuai konfigurasi.
-    const scanActive =
-      settings.tanggalMulaiScan &&
-      p.start >= new Date(settings.tanggalMulaiScan + 'T00:00:00');
-
-    const modalCashUsd = scanActive
-      ? Number(settings.splitCashUsd) || 0
-      : Number(settings.modalAwalUsd) || 0;
-
-    const modalScanUsd = scanActive
-      ? Number(settings.splitScanUsd) || 0
-      : 0;
+    // Setiap periode mendapat modal tetap sesuai konfigurasi (atau override khusus periode itu).
+    const modalUsd = getModalUsdForPeriod({ key: k, start: p.start, end: p.end });
 
     const modalTotal =
-      modalDashboardValue(modalCashUsd) +
-      modalDashboardValue(modalScanUsd);
+      modalDashboardValue(modalUsd.cashUsd) +
+      modalDashboardValue(modalUsd.scanUsd);
 
     // p.keluar sudah merupakan pengeluaran bersih periode:
     // transaksi + pinjaman periode - seluruh pembayaran pinjaman
@@ -1779,6 +1804,60 @@ function saveModalAwal(){
     splitScanUsd: Number(document.getElementById('setSplitScanUsd').value)||0,
     tanggalMulaiScan: document.getElementById('setTanggalMulaiScan').value,
   }, {merge:true}).then(()=>alert('Modal awal disimpan.'));
+}
+
+/* =========================================================
+   OVERRIDE MODAL PER PERIODE
+========================================================= */
+// Isi dropdown periode: 3 periode sebelumnya sampai 6 periode ke depan dari periode berjalan saat ini
+function fillOverridePeriodSelect(){
+  const sel = document.getElementById('overridePeriodSelect');
+  if(!sel) return;
+  const options = [];
+  for(let i = -3; i <= 6; i++){
+    const p = periodeFromOffset(i);
+    options.push(`<option value="${p.key}">${p.label}${i===0 ? ' (periode berjalan)' : ''}</option>`);
+  }
+  const prevValue = sel.value;
+  sel.innerHTML = options.join('');
+  if(prevValue) sel.value = prevValue;
+}
+function saveModalOverride(){
+  const periodKey = document.getElementById('overridePeriodSelect').value;
+  const cashUsd = Number(document.getElementById('overrideCashUsd').value) || 0;
+  const scanUsd = Number(document.getElementById('overrideScanUsd').value) || 0;
+  if(!periodKey){ alert('Pilih periode dulu.'); return; }
+  db.collection('modalOverride').doc(periodKey).set({ cashUsd, scanUsd })
+    .then(() => {
+      alert('Override modal untuk periode ini disimpan.');
+      document.getElementById('overrideCashUsd').value = '';
+      document.getElementById('overrideScanUsd').value = '';
+    })
+    .catch(e => alert('Gagal simpan: ' + e.message));
+}
+function deleteModalOverride(periodKey){
+  if(confirm('Hapus override modal untuk periode ' + periodKey + '? Periode ini akan kembali memakai aturan umum.')){
+    db.collection('modalOverride').doc(periodKey).delete();
+  }
+}
+function renderModalOverrideList(){
+  const box = document.getElementById('modalOverrideList');
+  if(!box) return;
+  if(modalOverrideData.length === 0){
+    box.innerHTML = '<div class="helper">Belum ada override khusus — semua periode memakai aturan umum di atas.</div>';
+    return;
+  }
+  const sorted = [...modalOverrideData].sort((a,b) => b.id.localeCompare(a.id));
+  box.innerHTML = `<div class="helper" style="margin-bottom:8px;font-weight:600;">Override aktif:</div>` +
+    sorted.map(o => {
+      const [y,m] = o.id.split('-');
+      const monthNames = ['','Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+      const label = (monthNames[Number(m)]||o.id) + ' ' + y;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--line);border-radius:7px;margin-bottom:6px;font-size:13px;">
+        <div><strong>${label}</strong> — Cash $${o.cashUsd} · Scan $${o.scanUsd}</div>
+        <button class="btn btn-outline btn-sm" onclick="deleteModalOverride('${o.id}')">Hapus</button>
+      </div>`;
+    }).join('');
 }
 // Modal awal (IDR) untuk sebuah periode: reset tiap periode, tidak akumulasi.
 // Sebelum tanggalMulaiScan, seluruh modal dianggap Cash.
